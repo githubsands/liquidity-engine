@@ -1,31 +1,45 @@
+use serde::{Deserialize, Serialize};
+use serde_yaml;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
-use serde_yaml;
-
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    exchanges: Vec<ExchangeConfig>,
-    io_thread_percent: f64,
-    ring_buffer_size: usize,
-    channel_buffer_size: usize,
-}
-
-
-#[derive(Debug, Deserialize)]
-struct ExchangeConfig {
-    name: String,
-    uri: String,
-    orderbook_subscription_message: SubscriptionMessage,
+    pub exchanges: Vec<ExchangeConfig>,
+    pub order_book: OrderbookConfig,
+    pub grpc_server: GRPCServerConfig,
 }
 
 #[derive(Debug, Deserialize)]
-struct SubscriptionMessage {
-    method: String,
-    params: Vec<String>,
-    id: u32,
+pub struct OrderbookConfig {
+    pub ring_buffer: RingBufferConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RingBufferConfig {
+    pub ring_buffer_size: usize,
+    pub channel_buffer_size: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExchangeConfig {
+    pub name: String,
+    pub uri: String,
+    pub orderbook_subscription_message: SubscriptionMessage,
+    pub buffer_size: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GRPCServerConfig {
+    pub host_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubscriptionMessage {
+    pub method: String,
+    pub params: Vec<String>,
+    pub id: u32,
 }
 
 pub fn read_yaml_config<P: AsRef<Path>>(path: P) -> Result<Config, Box<dyn std::error::Error>> {

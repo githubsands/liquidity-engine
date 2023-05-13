@@ -1,0 +1,23 @@
+exchanges:
+  - name: "binance"
+    uri: "wss://stream.binance.com:9443/ws"
+    trading_pair: "BTCUSDT"
+    subscription_message:
+      method: "SUBSCRIBE"
+      params:
+        - "btcusdt@aggTrade"
+        - "btcusdt@depth"
+      id: 1
+    buffer_size: 300
+
+  - name: "binance_2"
+    uri: "wss://stream.binance.com:9443/ws"
+    trading_pair: "BTCUSDT"
+
+orderbook:
+  ring_buffer:
+    ring_buffer_size: 30000
+    channel_buffer_size: 30000
+
+grpc_server_config:
+  host_uri: ":9090"
