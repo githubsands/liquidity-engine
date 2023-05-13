@@ -28,6 +28,8 @@ use pin_project_lite::pin_project;
 
 use tracing::{error, info};
 
+use bounded_vec_deque::BoundedVecDeque;
+
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
     pub struct ExchangeWS {
@@ -37,7 +39,7 @@ pin_project! {
         orderbook_subscription_message: String,
 
         #[pin]
-        buffer: Box<VecDeque<Message>>,
+        buffer: Box<BoundedVecDeque<Message>>,
         #[pin]
         ws_connection_orderbook: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
         #[pin]
@@ -59,13 +61,13 @@ impl ExchangeWS {
     ) -> Result<Self, ErrorInitialState> {
         let exchange = ExchangeWS {
             uri: exchange_config.uri.to_string(),
-            watched_pairs: exchange_config.watched_pairs.to_string(),
+            watched_pairs: exchange_config.watched_pair.to_string(),
             orderbook_subscription_message: exchange_config
                 .orderbook_subscription_message
                 .to_string(),
 
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-            buffer: Box::new(VecDeque::new()),
+            buffer: Box::new(BoundedVecDeque::new(exchange_config.buffer_size)),
             orderbook_reader_running: false,
             ws_connection_orderbook_reader: None,
             // ws_connection_orderbook_writer: None,
