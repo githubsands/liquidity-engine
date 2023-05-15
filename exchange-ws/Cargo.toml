@@ -1,0 +1,28 @@
+[package]
+name = "exchange-ws"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde_json = "1.0.96"
+order = { path = "../order"}
+
+config = { path = "../config"}
+quoter-errors = { path = "../quoter-errors"}
+crossbeam-channel = "0.5.8"
+async-stream = "0.3.5"
+tokio = "1.28.1"
+pin-utils = "0.1.0"
+futures = "0.3.28"
+pin-project-lite = "0.2.9"
+tracing = "0.1.37"
+tungstenite = "0.19.0"
+tokio-tungstenite = { version = "*", features = ["native-tls"] }
+futures-util = { version = "0.3.28" }
+bounded-vec-deque = "0.1.1"
+bbqueue = "0.5.1"
+native-tls = "0.2.11"
+futures-channel = "0.3.28"
+futures-core = "0.3.28"

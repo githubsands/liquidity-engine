@@ -1,0 +1,20 @@
+[package]
+name = "orderbook-quoter-server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num_cpus.workspace = true
+serde.workspace = true
+rayon = { version = "1" }
+tokio = { version = "1.28.1", features = ["full"] }
+tracing = "0.1.37"
+exchange-controller = { path = "../exchange-controller"}
+futures = "0.3.28"
+config = { path = "../config"}
+crossbeam = "0.8.2"
+crossbeam-channel = "0.5.8"
+serde_yaml.workspace = true
+tracing-subscriber = "0.3.17"
