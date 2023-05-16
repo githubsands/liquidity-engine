@@ -14,6 +14,7 @@ use num_cpus;
 use tracing::{debug, error, info, warn};
 
 use exchange_controller::ExchangeController;
+use orderbook::OrderBook;
 
 use config::{read_yaml_config, Config};
 
@@ -31,18 +32,22 @@ fn main() {
             file.push("quoter-config.yaml");
             let config_file = read_yaml_config(file);
             info!("found configuration file");
+            let num_threads = num_cpus::get();
             let mut async_rt = Builder::new_multi_thread()
                 .enable_io()
                 .worker_threads(4)
-                .thread_stack_size(3 * 1024 * 1024)
+                .thread_stack_size(num_threads * config_file.io_thread_percentage)
                 .build()
                 .unwrap();
-            let num_threads = num_cpus::get();
             let mut tp = rayon::ThreadPoolBuilder::new()
-                .num_threads(num_threads)
+                .num_threads(num_threads - (num_threads * config_file.io_thread_percentage))
                 .build()
                 .unwrap();
             let res = orderbook_quoter_server(&config_file.unwrap(), &mut async_rt, &mut tp);
+            match res {
+                Ok(_) => info!("shutting down orderbook_quoter_server"),
+                Err(error) => error!("failed to run orderbook quoter server {}", error),
+            }
         }
         Err(error) => {
             error!("failed to start orderbook quoter server: {}", error);
@@ -56,14 +61,17 @@ fn orderbook_quoter_server(
     thread_pool: &mut ThreadPool,
 ) -> Result<(), Box<dyn Error>> {
     let async_handle = async_runtime.handle();
-    let (s1, _) = bounded(4);
-    let (s2, _) = bounded(4);
-    let exchange_controller_result = ExchangeController::new(&config.exchanges, s1, s2);
+    let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
+    let exchange_controller_result = ExchangeController::new(&config.exchanges, orderbook_producer);
     info!("created exchange controller");
 
-    async_runtime.block_on(exchange_controller_result.unwrap().boot_exchanges());
+    let exchange_io_result =
+        async_runtime.block_on(exchange_controller_result.unwrap().boot_exchanges());
+    match exchange_io_result {
+        Ok(_) => info!("success"),
+        Err(_) => error!("exchange io failed"),
+    }
     info!("quoter server is shutting down");
-
     Ok(())
     /*
     let (quoter_server, quote_producer) = QuoterServer::new(config.quoter_server_config)

@@ -1,10 +1,13 @@
 use std::fmt;
+use thiserror::Error;
 
 pub enum ErrorHotPath {
     ExchangeWSError(String),
     ExchangeWSReconnectError(String),
+    Serialization(String),
     QuoterGRPCError(String),
     QuoteServerSinkError(String),
+    ReceivedNonTextMessageFromExchange,
 }
 
 impl fmt::Display for ErrorHotPath {
@@ -16,15 +19,21 @@ impl fmt::Display for ErrorHotPath {
             }
             ErrorHotPath::QuoterGRPCError(s) => write!(f, "Quoter GRPC Error: {}", s),
             ErrorHotPath::QuoteServerSinkError(s) => write!(f, "Quote Server Sink Error: {}", s),
+            ErrorHotPath::Serialization(s) => write!(f, "Serialization error: {}", s),
+            ErrorHotPath::ReceivedNonTextMessageFromExchange => {
+                write!(f, "ReceivedNonTextMessage")
+            }
         }
     }
 }
 
-#[derive(Debug)]
+// TODO: Update these errors to take in the upstream error
+#[derive(Error, Debug)]
 pub enum ErrorInitialState {
     ExchangeWSError(tokio_tungstenite::tungstenite::Error),
     MessageSerialization(String),
     WSConnection(String),
+    Snapshot(String),
     ExchangeController,
 }
 
@@ -39,6 +48,7 @@ impl fmt::Display for ErrorInitialState {
             }
             ErrorInitialState::WSConnection(s) => write!(f, "WS Connection Error: {}", s),
             ErrorInitialState::ExchangeController => write!(f, "Exchange Controller Error"),
+            ErrorInitialState::Snapshot(s) => write!(f, "Exchange Snapshot error: {}", s),
         }
     }
 }
