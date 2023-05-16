@@ -21,15 +21,14 @@ pub struct ExchangeController {
 impl ExchangeController {
     pub fn new(
         exchange_configs: &Vec<ExchangeConfig>,
-        order_ask_producer: Sender<Order>,
-        order_bid_producer: Sender<Order>,
+        orders_producer: Sender<Order>,
     ) -> Result<Box<ExchangeController>, ErrorInitialState> {
         let mut exchanges: Vec<Box<ExchangeWS>> = Vec::new();
         for exchange_config in exchange_configs {
             let exchange_creation_result = ExchangeWS::new(
                 exchange_config,
-                order_ask_producer.clone(),
-                order_bid_producer.clone(),
+                orders_producer.clone(),
+                exchange_config.http_client,
             );
             match exchange_creation_result {
                 Ok(exchange) => {
@@ -60,22 +59,29 @@ impl ExchangeController {
         }
     }
     pub async fn handle_orders(&mut self) {
-        while let Some(exchange_streaming_state) = self.exchanges[0].next().await {
-            match exchange_streaming_state {
-                WSStreamState::Success => {
-                    println!("received stream state succcess\n");
-                    continue;
+        let exchange_1 = async {
+            while let Some(exchange_streaming_state) = self.exchanges[0].next().await {
+                match exchange_streaming_state {
+                    WSStreamState::Success => {
+                        println!("received stream state succcess\n");
+                        continue;
+                    }
+                    WSStreamState::FailedStream => {
+                        println!("received stream state fail \n");
+                        continue;
+                    }
+                    WSStreamState::SenderError => {
+                        println!("received stream state fail \n");
+                        continue;
+                    }
+                    WSStreamState::FailedDeserialize => {
+                        println!("received stream state fail \n");
+                        continue;
+                    }
+                    WSStreamState::WSError(_) => continue,
                 }
-                WSStreamState::FailedStream => {
-                    println!("received stream state fail \n");
-                    continue;
-                }
-                WSStreamState::SenderError => {
-                    println!("received stream state fail \n");
-                    continue;
-                }
-                WSStreamState::WSError(_) => continue,
             }
-        }
+        };
+        exchange_1.await
     }
 }

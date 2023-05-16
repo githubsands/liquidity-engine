@@ -7,6 +7,7 @@ use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub io_thread_percentage: f64,
     pub exchanges: Vec<ExchangeConfig>,
     pub orderbook: OrderbookConfig,
     pub grpc_server: GRPCServerConfig,
@@ -28,39 +29,21 @@ pub struct RingBufferConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct ExchangeConfig {
-    pub name: String,
-    pub watched_pairs: String,
-    pub uri: String,
-    pub orderbook_subscription_message: SubscriptionMessage,
+    pub client_name: String,
+    pub exchange_name: u8,
+    pub snapshot_enabled: bool,
+    pub snapshot_uri: String,
+    pub ws_uri: String,
+    pub http_client: bool,
+    pub depth: u64,
     pub buffer_size: usize,
+    pub watched_pair: String,
+    pub orderbook_subscription_message: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GRPCServerConfig {
     pub host_uri: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SubscriptionMessage {
-    pub method: String,
-    pub params: SubscriptionMessageParams,
-    pub id: u64,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SubscriptionMessageParams {
-    pub symbol: String,
-    pub limit: String,
-}
-
-impl fmt::Display for SubscriptionMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SubscriptionMessage(method: {}, params: {:?}, id: {})",
-            self.method, self.params, self.id
-        )
-    }
 }
 
 pub fn read_yaml_config<P: AsRef<Path>>(path: P) -> Result<Config, Box<dyn std::error::Error>> {
