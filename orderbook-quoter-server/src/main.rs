@@ -1,4 +1,5 @@
 use futures::future::join_all;
+use futures::StreamExt;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use tokio::runtime::{Builder, Runtime};
@@ -76,15 +77,17 @@ fn orderbook_quoter_server(
     let async_handle = async_runtime.handle();
     // let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
     let (orderbook_producer, _) = bounded(4);
-    let exchange_controller_result = ExchangeController::new(&config.exchanges, orderbook_producer);
+    let mut exchange_controller_result =
+        ExchangeController::new(&config.exchanges, orderbook_producer).unwrap();
     info!("created exchange controller");
-
-    let exchange_io_result =
-        async_runtime.block_on(exchange_controller_result.unwrap().boot_exchanges());
-    match exchange_io_result {
-        Ok(_) => info!("successfully started the exchanges"),
-        Err(error) => error!("exchange io failed: {}", error),
-    }
+    async_runtime.block_on(async move {
+        exchange_controller.boot_exchanges().await;
+        async_sleep(async_duration::from_secs(10)).await;
+        while let Some(mut exchange) = exchange_controller.exchange() {
+            info!("spawning async handler for");
+            tokio::spawn(async move { exchange.next().await });
+        }
+    });
     info!("quoter server is shutting down");
     Ok(())
     /*
