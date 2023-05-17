@@ -8,7 +8,7 @@ use quoter_errors::ErrorInitialState;
 
 use crossbeam_channel::Sender;
 
-use futures::future::IntoFuture;
+use futures::future::{try_join_all, IntoFuture};
 use futures::{Future, StreamExt};
 
 use std::pin::Pin;
@@ -43,16 +43,52 @@ impl ExchangeController {
     }
     pub async fn boot_exchanges(&mut self) -> Result<(), ErrorInitialState> {
         info!("booting exchanges");
-        for exchange in &mut self.exchanges {
-            info!("booting exchanges {}", exchange.uri);
-            match exchange.start().await {
-                Ok(_) => continue,
-                Err(exchange_start_error) => {
-                    error!("could not connect to exchange {}", exchange_start_error);
-                    return Err(exchange_start_error);
-                }
+
+        {
+            let mut exchange_websocket_initial_boot_tasks: Vec<_> = Vec::new();
+
+            for exchange in &mut self.exchanges {
+                let websocket_future = async {
+                    match exchange.start().await {
+                        Ok(_) => return Ok(()),
+                        Err(exchange_start_error) => {
+                            error!("could not connect to exchange {}", exchange_start_error);
+                            return Err(exchange_start_error);
+                        }
+                    }
+                };
+                exchange_websocket_initial_boot_tasks.push(websocket_future);
             }
+            let exchange_websockets_results: Result<Vec<_>, ErrorInitialState> =
+                try_join_all(exchange_websocket_initial_boot_tasks).await;
+            let new_nums = exchange_websockets_results.unwrap();
         }
+
+        {
+            let mut orderbook_snapshot_tasks: Vec<_> = Vec::new();
+
+            for exchange in &mut self.exchanges {
+                let snapshot_future = async {
+                    let snapshot_result = exchange.run_snapshot().await;
+                    match snapshot_result {
+                        Ok(()) => return Ok(()),
+                        Err(snapshot_error) => {
+                            error!("could not get snapshot for exchange");
+                            return Err(ErrorInitialState::Snapshot(snapshot_error.to_string()));
+                        }
+                    }
+                };
+                orderbook_snapshot_tasks.push(snapshot_future);
+            }
+            let snap_shot_results: Result<Vec<_>, ErrorInitialState> =
+                try_join_all(orderbook_snapshot_tasks).await;
+            let new_nums = snap_shot_results.unwrap();
+        }
+        Ok(())
+    }
+}
+
+/*
         loop {
             info!("handling orders");
             self.handle_orders().await;
@@ -85,3 +121,4 @@ impl ExchangeController {
         exchange_1.await
     }
 }
+*/

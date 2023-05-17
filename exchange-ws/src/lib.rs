@@ -72,9 +72,10 @@ impl ExchangeWS {
         orders_producer: Sender<Order>,
         http_client_option: bool,
     ) -> Result<Box<Self>, ErrorInitialState> {
-        let http_client = None;
-        if http_client_option {
-            let http_client = Some(Client::new());
+        let mut http_client: Option<Client> = None;
+        if exchange_config.snapshot_enabled {
+            info!("snapshot is enabled building http client");
+            http_client = Some(Client::new());
         }
         let exchange = ExchangeWS {
             client_name: exchange_config.client_name.clone(),
@@ -122,8 +123,9 @@ impl ExchangeWS {
         };
         Ok(())
     }
-    pub async fn run_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let snapshot_orders = self.orderbook_snapshot().await?;
+        info!("received snapshot orders - now buffering them");
         self.buffer_snapshot_orders(snapshot_orders).await;
         Ok(())
     }
@@ -139,34 +141,37 @@ impl ExchangeWS {
             .as_ref()
             .unwrap()
             .get(self.snapshot_uri.clone());
+        info!("area one");
+        // TODO: Implement http retries here
         let snapshot_response_result = req_builder.send().await;
         match snapshot_response_result {
-            Ok(snapshot_response) => {
-                info!("received snapshot");
-                info!("buffering snapshot levels");
-                match self.exchange_name {
-                    0 => {
-                        let snapshot: SnapShotDepthResponseBinance =
-                            snapshot_response.json().await?;
-                        Ok(snapshot.orders())
-                    }
-                    1 => {
-                        let snapshot: SnapShotDepthResponseByBit = snapshot_response.json().await?;
-                        Ok(snapshot.orders())
-                    }
-                    _ => {
-                        return {
-                            Err(Box::new(ErrorInitialState::Snapshot(
-                                "Failed to create snapshot".to_string(),
-                            )))
-                        }
-                    }
+            Ok(snapshot_response) => match self.exchange_name {
+                0 => {
+                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
+                    info!("finished receiving snaps for {}", self.exchange_name);
+                    Ok(snapshot.orders())
                 }
-            }
-            Err(_) => {
-                return Err(Box::new(ErrorInitialState::Snapshot(
-                    "Failed to create snapshot".to_string(),
-                )))
+                1 => {
+                    let snapshot: SnapShotDepthResponseByBit = snapshot_response.json().await?;
+                    info!("finished receiving snaps for {}", self.exchange_name);
+                    Ok(snapshot.orders())
+                }
+                _ => {
+                    error!(
+                        "failed to create snapshot due to exchange_name {} ",
+                        self.exchange_name
+                    );
+                    return {
+                        info!("area two");
+                        Err(Box::new(ErrorInitialState::Snapshot(
+                            "Failed to create snapshot".to_string(),
+                        )))
+                    };
+                }
+            },
+            Err(err) => {
+                info!("area three {}", err);
+                return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
             }
         }
     }
@@ -176,6 +181,7 @@ impl ExchangeWS {
     // async functions cannot be inlined
     async fn buffer_snapshot_orders(&mut self, orders: (Vec<Order>, Vec<Order>)) {
         for (order_bids, order_asks) in orders.0.into_iter().zip(orders.1) {
+            info!("pushing snapshot orders");
             self.snap_shot_buffer.push_back(order_bids);
             self.snap_shot_buffer.push_back(order_asks);
         }
