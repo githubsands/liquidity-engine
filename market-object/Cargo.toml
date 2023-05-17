@@ -1,5 +1,5 @@
 [package]
-name = "order"
+name = "market-object"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,6 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde-this-or-that = "0.4.2"
+serde_json = "1.0.96"
 smallvec = "1.10.0"
+tungstenite = "0.19.0"
