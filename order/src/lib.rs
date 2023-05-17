@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_this_or_that::as_f64;
+use smallvec::{smallvec, SmallVec};
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub struct OrderBookUpdateBinance {
@@ -38,7 +40,6 @@ pub struct ByBitData {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapShotDepthResponseByBit {
-    pub retCode: i32,
     pub retMsg: String,
     pub topic: String,
     pub ts: u64,
@@ -48,9 +49,10 @@ pub struct SnapShotDepthResponseByBit {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SnapShotDepthResponseBinance {
+    pub retcode: Option<i32>,
     pub lastUpdateId: u64,
-    pub bids: Vec<BinanceOrder>,
     pub asks: Vec<BinanceOrder>,
+    pub bids: Vec<BinanceOrder>,
 }
 
 impl SnapShotDepthResponseBinance {
@@ -115,7 +117,9 @@ pub struct ByBitOrder {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BinanceOrder {
+    #[serde(deserialize_with = "as_f64")]
     pub price: f64,
+    #[serde(deserialize_with = "as_f64")]
     pub quantity: f64,
 }
 

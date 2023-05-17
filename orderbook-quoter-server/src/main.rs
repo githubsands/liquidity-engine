@@ -82,7 +82,7 @@ fn orderbook_quoter_server(
     let exchange_io_result =
         async_runtime.block_on(exchange_controller_result.unwrap().boot_exchanges());
     match exchange_io_result {
-        Ok(_) => info!("success"),
+        Ok(_) => info!("successfully started the exchanges"),
         Err(error) => error!("exchange io failed: {}", error),
     }
     info!("quoter server is shutting down");

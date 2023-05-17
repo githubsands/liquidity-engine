@@ -4,7 +4,7 @@ use crossbeam_channel::{bounded, Sender, TrySendError};
 
 use tokio::io::ReadHalf;
 
-use serde_json::{to_string as jsonify, Value};
+use serde_json::{from_str, to_string as jsonify, Value};
 
 use futures::task::Context;
 
@@ -16,9 +16,7 @@ use tokio_tungstenite::{
 use tokio::net::TcpStream;
 
 use config::ExchangeConfig;
-use order::{
-    BinanceOrder, ByBitOrder, Order, SnapShotDepthResponseBinance, SnapShotDepthResponseByBit,
-};
+use order::{BinanceOrder, Order, OrderBookUpdateBinance, SnapShotDepthResponseBinance};
 
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
@@ -125,8 +123,9 @@ impl ExchangeWS {
     }
     pub async fn run_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let snapshot_orders = self.orderbook_snapshot().await?;
-        info!("received snapshot orders - now buffering them");
+        info!("received snapshot orders - now buffering the orders");
         self.buffer_snapshot_orders(snapshot_orders).await;
+        info!("finished buffering the orders");
         Ok(())
     }
     // TODO: Don't return dynamic errors here - this hack was used to deal with Reqwest errors
@@ -147,12 +146,13 @@ impl ExchangeWS {
         match snapshot_response_result {
             Ok(snapshot_response) => match self.exchange_name {
                 0 => {
-                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
+                    let body = snapshot_response.text().await?;
+                    let snapshot: SnapShotDepthResponseBinance = from_str(&body)?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
                 1 => {
-                    let snapshot: SnapShotDepthResponseByBit = snapshot_response.json().await?;
+                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
@@ -162,7 +162,6 @@ impl ExchangeWS {
                         self.exchange_name
                     );
                     return {
-                        info!("area two");
                         Err(Box::new(ErrorInitialState::Snapshot(
                             "Failed to create snapshot".to_string(),
                         )))
@@ -170,7 +169,7 @@ impl ExchangeWS {
                 }
             },
             Err(err) => {
-                info!("area three {}", err);
+                error!("failed to reconcile snapshot result: {}", err);
                 return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
             }
         }
@@ -179,9 +178,9 @@ impl ExchangeWS {
     // TODO: Implement this in one function so we don't have to clone a dynamically sized type
     // around ((Vec<Order>, Vec<Order>) or create another future or the on the stack.  Note that
     // async functions cannot be inlined
+    // TODO: Can these push_backs be chunked?
     async fn buffer_snapshot_orders(&mut self, orders: (Vec<Order>, Vec<Order>)) {
         for (order_bids, order_asks) in orders.0.into_iter().zip(orders.1) {
-            info!("pushing snapshot orders");
             self.snap_shot_buffer.push_back(order_bids);
             self.snap_shot_buffer.push_back(order_asks);
         }
@@ -194,7 +193,6 @@ impl ExchangeWS {
             "sending orderbook subscription message: {}\nto exchange {}",
             self.orderbook_subscription_message, self.websocket_uri
         );
-        /*
         let json_obj = serde_json::json!({
             "method": "SUBSCRIBE",
             "params": [
@@ -202,16 +200,13 @@ impl ExchangeWS {
             ],
             "id": 1
         });
-        */
-        let exchange_response = sink
-            .send(Message::Text(
-                jsonify(&self.orderbook_subscription_message).unwrap(),
-            ))
-            .await;
+        // jsonify(&self.orderbook_subscription_message).unwrap(),
+
+        let exchange_response = sink.send(Message::Text(json_obj.to_string())).await;
         // TODO: handle this differently;
         match exchange_response {
             Ok(response) => {
-                print!("subscription success")
+                print!("subscription success: {:?}", response);
             }
             Err(error) => {
                 print!("error {}", error)
@@ -291,7 +286,11 @@ impl Stream for ExchangeWS {
                 Some(ws_result) => match ws_result {
                     Ok(ws_message) => {
                         debug!("received order: {}\n", ws_message);
-                        // this.buffer.push_back(ws_message);
+                        let Some(order_update) = deserialize_message_to_orders(ws_message);
+                        {
+                            this.buffer.push_back(order_update.0);
+                            this.buffer.push_back(order_update.1);
+                        {
                     }
                     Err(ws_error) => return Poll::Ready(Some(WSStreamState::WSError(ws_error))),
                 },
@@ -300,8 +299,20 @@ impl Stream for ExchangeWS {
                 }
             }
         }
-        Poll::Pending
     }
+    Poll::Pending
+
+}
+}
+
+// TODO: Handle errors rather then going with an option
+fn deserialize_message_to_orders(message: Message) -> Option<(Order, Order)> {
+    if let Message::Text(text) = message {
+        let json: Value = serde_json::from_str(&text).ok()?;
+        let update: OrderBookUpdateBinance = serde_json::from_value(json).ok()?;
+        return Some(update.split_update());
+    }
+    None
 }
 
 // TODO: Great place to possibly do a macro for deserializing rather then going through a match

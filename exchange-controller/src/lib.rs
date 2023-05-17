@@ -4,7 +4,7 @@ use exchange_ws::{ExchangeWS, WSStreamState};
 use tracing::{debug, error, info, warn};
 
 use order::Order;
-use quoter_errors::ErrorInitialState;
+use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 use crossbeam_channel::Sender;
 
@@ -61,7 +61,7 @@ impl ExchangeController {
             }
             let exchange_websockets_results: Result<Vec<_>, ErrorInitialState> =
                 try_join_all(exchange_websocket_initial_boot_tasks).await;
-            let new_nums = exchange_websockets_results.unwrap();
+            let _ = exchange_websockets_results.unwrap();
         }
 
         {
@@ -73,7 +73,10 @@ impl ExchangeController {
                     match snapshot_result {
                         Ok(()) => return Ok(()),
                         Err(snapshot_error) => {
-                            error!("could not get snapshot for exchange");
+                            error!(
+                                "could not get snapshot for exchange {}",
+                                exchange.client_name
+                            );
                             return Err(ErrorInitialState::Snapshot(snapshot_error.to_string()));
                         }
                     }
@@ -82,43 +85,73 @@ impl ExchangeController {
             }
             let snap_shot_results: Result<Vec<_>, ErrorInitialState> =
                 try_join_all(orderbook_snapshot_tasks).await;
-            let new_nums = snap_shot_results.unwrap();
+            let _ = snap_shot_results.unwrap();
         }
-        Ok(())
-    }
-}
-
-/*
+        let ws_stream_result = self.handle_orders().await;
         loop {
             info!("handling orders");
             self.handle_orders().await;
         }
     }
     pub async fn handle_orders(&mut self) {
-        let exchange_1 = async {
-            while let Some(exchange_streaming_state) = self.exchanges[0].next().await {
-                match exchange_streaming_state {
-                    WSStreamState::Success => {
-                        println!("received stream state succcess\n");
-                        continue;
-                    }
-                    WSStreamState::FailedStream => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::SenderError => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::FailedDeserialize => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::WSError(_) => continue,
+        while let Some(exchange_streaming_state) = self.exchanges[0].try_next() {
+            match exchange_streaming_state {
+                WSStreamState::Success => {
+                    println!("received stream state succcess\n");
+                    continue;
                 }
+                WSStreamState::FailedStream => {
+                    println!("received stream state fail \n");
+                    continue;
+                }
+                WSStreamState::SenderError => {
+                    println!("received stream state fail \n");
+                    continue;
+                }
+                WSStreamState::FailedDeserialize => {
+                    println!("received stream state fail \n");
+                    continue;
+                }
+                WSStreamState::WSError(_) => continue,
             }
-        };
-        exchange_1.await
+        }
     }
+
+    /*
+    pub async fn handle_orders(&mut self) -> Result<(), ErrorHotPath> {
+        let mut tasks: Vec<Pin<Box<dyn Future<Output = Result<(), ErrorHotPath>>>>> = Vec::new();
+
+        for exchange in &mut self.exchanges {
+            let stream = Box::pin(async {
+                while let Some(exchange_streaming_state) = exchange.next().await {
+                    match exchange_streaming_state {
+                        WSStreamState::Success => {
+                            println!("received stream state succcess\n");
+                            continue;
+                        }
+                        WSStreamState::FailedStream => {
+                            println!("received stream state fail \n");
+                            continue;
+                        }
+                        WSStreamState::SenderError => {
+                            println!("received stream state fail \n");
+                            continue;
+                        }
+                        WSStreamState::FailedDeserialize => {
+                            println!("received stream state fail \n");
+                            continue;
+                        }
+                        WSStreamState::WSError(ws_error) => break,
+                    }
+                }
+                return Err(ErrorHotPath::ExchangeWSError("test".to_string()));
+            });
+            tasks.push(stream);
+        }
+
+        try_join_all(tasks).await?;
+
+        Ok(())
+    }
+    */
 }
-*/
