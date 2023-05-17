@@ -14,7 +14,7 @@ use num_cpus;
 use tracing::{debug, error, info, warn};
 
 use exchange_controller::ExchangeController;
-use orderbook::OrderBook;
+// use orderbook::OrderBook;
 
 use config::{read_yaml_config, Config};
 
@@ -32,15 +32,20 @@ fn main() {
             file.push("quoter-config.yaml");
             let config_file = read_yaml_config(file);
             info!("found configuration file");
-            let num_threads = num_cpus::get();
+            let num_cpus = num_cpus::get();
             let mut async_rt = Builder::new_multi_thread()
                 .enable_io()
-                .worker_threads(4)
-                .thread_stack_size(num_threads * config_file.io_thread_percentage)
+                .enable_time()
+                .worker_threads(usize(
+                    f64(num_cpus) * config_file.as_ref().unwrap().io_thread_percentage,
+                ))
                 .build()
                 .unwrap();
             let mut tp = rayon::ThreadPoolBuilder::new()
-                .num_threads(num_threads - (num_threads * config_file.io_thread_percentage))
+                .num_threads(usize(
+                    f64(num_cpus)
+                        - (f64(num_cpus) * config_file.as_ref().unwrap().io_thread_percentage),
+                ))
                 .build()
                 .unwrap();
             let res = orderbook_quoter_server(&config_file.unwrap(), &mut async_rt, &mut tp);
@@ -55,13 +60,22 @@ fn main() {
     }
 }
 
+fn f64(num: usize) -> f64 {
+    num as f64
+}
+
+fn usize(float_num: f64) -> usize {
+    float_num as usize
+}
+
 fn orderbook_quoter_server(
     config: &Config,
     async_runtime: &mut Runtime,
     thread_pool: &mut ThreadPool,
 ) -> Result<(), Box<dyn Error>> {
     let async_handle = async_runtime.handle();
-    let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
+    // let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
+    let (orderbook_producer, _) = bounded(4);
     let exchange_controller_result = ExchangeController::new(&config.exchanges, orderbook_producer);
     info!("created exchange controller");
 
@@ -69,7 +83,7 @@ fn orderbook_quoter_server(
         async_runtime.block_on(exchange_controller_result.unwrap().boot_exchanges());
     match exchange_io_result {
         Ok(_) => info!("success"),
-        Err(_) => error!("exchange io failed"),
+        Err(error) => error!("exchange io failed: {}", error),
     }
     info!("quoter server is shutting down");
     Ok(())
