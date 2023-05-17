@@ -16,9 +16,7 @@ use tokio_tungstenite::{
 use tokio::net::TcpStream;
 
 use config::ExchangeConfig;
-use order::{
-    BinanceOrder, ByBitOrder, Order, SnapShotDepthResponseBinance, SnapShotDepthResponseByBit,
-};
+use order::{BinanceOrder, Order, OrderBookUpdateBinance, SnapShotDepthResponseBinance};
 
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
@@ -180,6 +178,7 @@ impl ExchangeWS {
     // TODO: Implement this in one function so we don't have to clone a dynamically sized type
     // around ((Vec<Order>, Vec<Order>) or create another future or the on the stack.  Note that
     // async functions cannot be inlined
+    // TODO: Can these push_backs be chunked?
     async fn buffer_snapshot_orders(&mut self, orders: (Vec<Order>, Vec<Order>)) {
         for (order_bids, order_asks) in orders.0.into_iter().zip(orders.1) {
             self.snap_shot_buffer.push_back(order_bids);
@@ -194,7 +193,6 @@ impl ExchangeWS {
             "sending orderbook subscription message: {}\nto exchange {}",
             self.orderbook_subscription_message, self.websocket_uri
         );
-        /*
         let json_obj = serde_json::json!({
             "method": "SUBSCRIBE",
             "params": [
@@ -202,16 +200,13 @@ impl ExchangeWS {
             ],
             "id": 1
         });
-        */
-        let exchange_response = sink
-            .send(Message::Text(
-                jsonify(&self.orderbook_subscription_message).unwrap(),
-            ))
-            .await;
+        // jsonify(&self.orderbook_subscription_message).unwrap(),
+
+        let exchange_response = sink.send(Message::Text(json_obj.to_string())).await;
         // TODO: handle this differently;
         match exchange_response {
             Ok(response) => {
-                print!("subscription success")
+                print!("subscription success: {:?}", response);
             }
             Err(error) => {
                 print!("error {}", error)
@@ -291,7 +286,11 @@ impl Stream for ExchangeWS {
                 Some(ws_result) => match ws_result {
                     Ok(ws_message) => {
                         debug!("received order: {}\n", ws_message);
-                        // this.buffer.push_back(ws_message);
+                        let Some(order_update) = deserialize_message_to_orders(ws_message);
+                        {
+                            this.buffer.push_back(order_update.0);
+                            this.buffer.push_back(order_update.1);
+                        {
                     }
                     Err(ws_error) => return Poll::Ready(Some(WSStreamState::WSError(ws_error))),
                 },
@@ -300,8 +299,20 @@ impl Stream for ExchangeWS {
                 }
             }
         }
-        Poll::Pending
     }
+    Poll::Pending
+
+}
+}
+
+// TODO: Handle errors rather then going with an option
+fn deserialize_message_to_orders(message: Message) -> Option<(Order, Order)> {
+    if let Message::Text(text) = message {
+        let json: Value = serde_json::from_str(&text).ok()?;
+        let update: OrderBookUpdateBinance = serde_json::from_value(json).ok()?;
+        return Some(update.split_update());
+    }
+    None
 }
 
 // TODO: Great place to possibly do a macro for deserializing rather then going through a match
