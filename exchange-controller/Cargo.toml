@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 crossbeam-channel = "0.5.8"
 exchange-ws = { path = "../exchange-ws"}
-order = { path = "../order"}
+market-objects = { path = "../market-objects"}
 quoter-errors = { path = "../quoter-errors"}
 config = { path = "../config"}
 futures = "0.3.28"
