@@ -4,7 +4,7 @@ use crossbeam_channel::{bounded, Sender, TrySendError};
 
 use tokio::io::ReadHalf;
 
-use serde_json::{to_string as jsonify, Value};
+use serde_json::{from_str, to_string as jsonify, Value};
 
 use futures::task::Context;
 
@@ -125,8 +125,9 @@ impl ExchangeWS {
     }
     pub async fn run_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let snapshot_orders = self.orderbook_snapshot().await?;
-        info!("received snapshot orders - now buffering them");
+        info!("received snapshot orders - now buffering the orders");
         self.buffer_snapshot_orders(snapshot_orders).await;
+        info!("finished buffering the orders");
         Ok(())
     }
     // TODO: Don't return dynamic errors here - this hack was used to deal with Reqwest errors
@@ -147,12 +148,13 @@ impl ExchangeWS {
         match snapshot_response_result {
             Ok(snapshot_response) => match self.exchange_name {
                 0 => {
-                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
+                    let body = snapshot_response.text().await?;
+                    let snapshot: SnapShotDepthResponseBinance = from_str(&body)?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
                 1 => {
-                    let snapshot: SnapShotDepthResponseByBit = snapshot_response.json().await?;
+                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
@@ -162,7 +164,6 @@ impl ExchangeWS {
                         self.exchange_name
                     );
                     return {
-                        info!("area two");
                         Err(Box::new(ErrorInitialState::Snapshot(
                             "Failed to create snapshot".to_string(),
                         )))
@@ -170,7 +171,7 @@ impl ExchangeWS {
                 }
             },
             Err(err) => {
-                info!("area three {}", err);
+                error!("failed to reconcile snapshot result: {}", err);
                 return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
             }
         }
@@ -181,7 +182,6 @@ impl ExchangeWS {
     // async functions cannot be inlined
     async fn buffer_snapshot_orders(&mut self, orders: (Vec<Order>, Vec<Order>)) {
         for (order_bids, order_asks) in orders.0.into_iter().zip(orders.1) {
-            info!("pushing snapshot orders");
             self.snap_shot_buffer.push_back(order_bids);
             self.snap_shot_buffer.push_back(order_asks);
         }

@@ -61,7 +61,7 @@ impl ExchangeController {
             }
             let exchange_websockets_results: Result<Vec<_>, ErrorInitialState> =
                 try_join_all(exchange_websocket_initial_boot_tasks).await;
-            let new_nums = exchange_websockets_results.unwrap();
+            let _ = exchange_websockets_results.unwrap();
         }
 
         {
@@ -73,7 +73,10 @@ impl ExchangeController {
                     match snapshot_result {
                         Ok(()) => return Ok(()),
                         Err(snapshot_error) => {
-                            error!("could not get snapshot for exchange");
+                            error!(
+                                "could not get snapshot for exchange {}",
+                                exchange.client_name
+                            );
                             return Err(ErrorInitialState::Snapshot(snapshot_error.to_string()));
                         }
                     }
@@ -82,7 +85,7 @@ impl ExchangeController {
             }
             let snap_shot_results: Result<Vec<_>, ErrorInitialState> =
                 try_join_all(orderbook_snapshot_tasks).await;
-            let new_nums = snap_shot_results.unwrap();
+            let _ = snap_shot_results.unwrap();
         }
         Ok(())
     }
