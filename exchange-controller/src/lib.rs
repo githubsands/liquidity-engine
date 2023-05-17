@@ -3,7 +3,7 @@ use exchange_ws::{ExchangeWS, WSStreamState};
 
 use tracing::{debug, error, info, warn};
 
-use order::Order;
+use market_objects::DepthUpdate
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 use crossbeam_channel::Sender;
@@ -21,7 +21,7 @@ pub struct ExchangeController {
 impl ExchangeController {
     pub fn new(
         exchange_configs: &Vec<ExchangeConfig>,
-        orders_producer: Sender<Order>,
+        orders_producer: Sender<DepthUpdate>,
     ) -> Result<Box<ExchangeController>, ErrorInitialState> {
         let mut exchanges: Vec<Box<ExchangeWS>> = Vec::new();
         for exchange_config in exchange_configs {
@@ -88,70 +88,9 @@ impl ExchangeController {
             let _ = snap_shot_results.unwrap();
         }
         let ws_stream_result = self.handle_orders().await;
-        loop {
-            info!("handling orders");
-            self.handle_orders().await;
-        }
+        let _ = ws_stream_results.unwrap();
     }
-    pub async fn handle_orders(&mut self) {
-        while let Some(exchange_streaming_state) = self.exchanges[0].try_next() {
-            match exchange_streaming_state {
-                WSStreamState::Success => {
-                    println!("received stream state succcess\n");
-                    continue;
-                }
-                WSStreamState::FailedStream => {
-                    println!("received stream state fail \n");
-                    continue;
-                }
-                WSStreamState::SenderError => {
-                    println!("received stream state fail \n");
-                    continue;
-                }
-                WSStreamState::FailedDeserialize => {
-                    println!("received stream state fail \n");
-                    continue;
-                }
-                WSStreamState::WSError(_) => continue,
-            }
-        }
+    pub fn exchange(&mut self) -> Option<Box<ExchangeWS>> {
+        return self.exchanges.pop();
     }
-
-    /*
-    pub async fn handle_orders(&mut self) -> Result<(), ErrorHotPath> {
-        let mut tasks: Vec<Pin<Box<dyn Future<Output = Result<(), ErrorHotPath>>>>> = Vec::new();
-
-        for exchange in &mut self.exchanges {
-            let stream = Box::pin(async {
-                while let Some(exchange_streaming_state) = exchange.next().await {
-                    match exchange_streaming_state {
-                        WSStreamState::Success => {
-                            println!("received stream state succcess\n");
-                            continue;
-                        }
-                        WSStreamState::FailedStream => {
-                            println!("received stream state fail \n");
-                            continue;
-                        }
-                        WSStreamState::SenderError => {
-                            println!("received stream state fail \n");
-                            continue;
-                        }
-                        WSStreamState::FailedDeserialize => {
-                            println!("received stream state fail \n");
-                            continue;
-                        }
-                        WSStreamState::WSError(ws_error) => break,
-                    }
-                }
-                return Err(ErrorHotPath::ExchangeWSError("test".to_string()));
-            });
-            tasks.push(stream);
-        }
-
-        try_join_all(tasks).await?;
-
-        Ok(())
-    }
-    */
 }
