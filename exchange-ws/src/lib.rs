@@ -134,6 +134,7 @@ impl ExchangeWS {
                 }
             }
         }
+        Ok(())
     }
 
     // TODO: Don't return dynamic errors here - this hack was used to deal with Reqwest errors

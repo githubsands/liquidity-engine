@@ -1,11 +1,14 @@
 use std::error::Error;
 
+use futures::StreamExt;
 use num_cpus;
 use rayon::ThreadPool;
 use tokio::runtime::{Builder, Runtime};
+use tokio::time::{sleep as async_sleep, Duration as async_duration};
 
 use std::env;
 
+use awaitgroup::WaitGroup;
 use crossbeam_channel::bounded;
 
 use tracing::{error, info};
@@ -69,29 +72,21 @@ fn orderbook_quoter_server(
     let async_handle = async_runtime.handle();
     // let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
     let (orderbook_producer, _) = bounded(4);
-    let mut exchange_controller_result =
+    let mut exchange_controller =
         ExchangeController::new(&config.exchanges, orderbook_producer).unwrap();
     info!("created exchange controller");
-    async_runtime.block_on(async move {
+    async_handle.block_on(async move {
         exchange_controller.boot_exchanges().await;
         async_sleep(async_duration::from_secs(10)).await;
-        while let Some(mut exchange) = exchange_controller.exchange() {
+        while let Some(mut exchange_stream) = exchange_controller.exchange() {
             info!("spawning async handler for");
-            tokio::spawn(async move { exchange.next().await });
+            tokio::spawn(async move {
+                exchange_stream.next().await;
+            });
         }
     });
+    // TODO: wait for tasks to finish
+
     info!("quoter server is shutting down");
     Ok(())
-    /*
-    let (quoter_server, quote_producer) = QuoterServer::new(config.quoter_server_config)
-    let (orderbook, order_buy_producer, order_bid_producer) = Orderbook::new(config.orderbook_config, quote_producer);
-
-    let exchange_controller =  ExchangeController::new(&config.exchanges, order_buy_producer, order_bid_producer);
-    async_handle.spawn(move async {
-        if let Err(exchange_boot_result) = exchange_controller.boot_exchanges.await() {
-            error!("failed to boot exchanges")
-        }
-        exchange_controller.receive_orderbooks.await()
-    });
-    */
 }
