@@ -19,3 +19,4 @@ crossbeam-channel = "0.5.8"
 serde_yaml.workspace = true
 tracing-subscriber = "0.3.17"
 awaitgroup = "0.6.0"
+clap = "3.0"
