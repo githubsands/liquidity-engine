@@ -85,7 +85,7 @@ impl ExchangeController {
 
         Ok(())
     }
-    pub fn exchange(&mut self) -> Option<Box<ExchangeWS>> {
+    pub fn pop_exchange(&mut self) -> Option<Box<ExchangeWS>> {
         return self.exchanges.pop();
     }
 }
