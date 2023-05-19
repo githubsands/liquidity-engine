@@ -39,6 +39,7 @@ pub struct ExchangeConfig {
     pub buffer_size: usize,
     pub watched_pair: String,
     pub orderbook_subscription_message: String,
+    pub ignore_snapshot_websocket: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

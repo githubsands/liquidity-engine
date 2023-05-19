@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 crossbeam-channel = "0.5.8"
-exchange-ws = { path = "../exchange-ws"}
+exchange-stream = { path = "../exchange-stream"}
 market-object = { path = "../market-object"}
 quoter-errors = { path = "../quoter-errors"}
 config = { path = "../config"}
@@ -13,5 +13,4 @@ futures = "0.3.28"
 use = "0.0.0"
 tungstenite = "0.19.0"
 cross = "0.2.5"
-tokio.workspace = true
 tracing = "0.1.37"

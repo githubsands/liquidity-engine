@@ -40,10 +40,11 @@ use futures_util::sink::SinkExt;
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
-    pub struct ExchangeWS {
+    pub struct ExchangeStream {
         pub client_name: String,
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
+        pub snapshot_buffer: Vec<DepthUpdate>,
         pub snapshot_uri: String,
         pub websocket_uri: String,
         pub watched_pair: String,
@@ -64,7 +65,7 @@ pin_project! {
     }
 }
 
-impl ExchangeWS {
+impl ExchangeStream {
     pub fn new(
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<Order>,
@@ -75,9 +76,10 @@ impl ExchangeWS {
             info!("snapshot is enabled building http client");
             http_client = Some(Client::new());
         }
-        let exchange = ExchangeWS {
+        let exchange = ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
+            snapshot_buffer: Vec::with_capacity(15000),
             snapshot_enabled: exchange_config.snapshot_enabled,
             snapshot_uri: exchange_config.snapshot_uri.clone(),
             websocket_uri: exchange_config.ws_uri.clone(),
@@ -144,8 +146,8 @@ impl ExchangeWS {
         // TODO: Implement http retries here
         let snapshot_response_result = req_builder.send().await;
         match snapshot_response_result {
-            Ok(snapshot_response) => match self.exchange_name {
-                0 => {
+            Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
+                (snapshot_response, 1) => {
                     let body = snapshot_response.text().await?;
                     let snapshot: SnapShotDepthResponseBinance = from_str(&body)?;
                     info!("finished receiving snaps for {}", self.exchange_name);
@@ -156,16 +158,20 @@ impl ExchangeWS {
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
+                (snapshot_response, 3) => {
+                    let snapshot: HTTPSnapShotDepthResponseByBit = snapshot_response.json().await?;
+                    info!("finished receiving snaps for {}", self.exchange_name);
+                    let snapshot_depths = snapshot.depths(3);
+                    Ok(snapshot_depths)
+                }
                 _ => {
                     error!(
-                        "failed to create snapshot due to exchange_name {} ",
+                        "failed to create snapshot due to exchange_name {}",
                         self.exchange_name
                     );
-                    return {
-                        Err(Box::new(ErrorInitialState::Snapshot(
-                            "Failed to create snapshot".to_string(),
-                        )))
-                    };
+                    return Err(Box::new(ErrorInitialState::Snapshot(
+                        "Failed to create snapshot".to_string(),
+                    )));
                 }
             },
             Err(err) => {
@@ -193,16 +199,19 @@ impl ExchangeWS {
             "sending orderbook subscription message: {}\nto exchange {}",
             self.orderbook_subscription_message, self.websocket_uri
         );
-        let json_obj = serde_json::json!({
+        let json_obj_binance = serde_json::json!({
             "method": "SUBSCRIBE",
             "params": [
                 "btcusdt@depth",
             ],
             "id": 1
         });
-        // jsonify(&self.orderbook_subscription_message).unwrap(),
+        let json_obj_bybit = serde_json::json!({
+              "op": "subscribe",
+              "args": ["orderbook.1.USDTBTC"]
+        });
 
-        let exchange_response = sink.send(Message::Text(json_obj.to_string())).await;
+        let exchange_response = sink.send(Message::Text(json_obj_binance.to_string())).await;
         // TODO: handle this differently;
         match exchange_response {
             Ok(response) => {
@@ -247,44 +256,40 @@ pub enum WSStreamState {
     Success,
 }
 
-impl Stream for ExchangeWS {
+impl Stream for ExchangeStream {
     type Item = WSStreamState;
 
     fn poll_next(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        // Check if we have any orders in the buffer if we do try_send them forward to the
-        // orderbook. At t=0 or if we have exchange faults this will always pass.
         let mut this = self.project();
         debug!("waiting for items\n");
         while let Some(order) = this.buffer.pop_front() {
             if let Err(channel_error) = this.orders_producer.try_send(order) {
                 match channel_error {
+                    // NOTE: If we see warnings here we may need to increase the size of our main
+                    // buffer, or the size of the channel. This should not happen.
                     TrySendError::Full(_) => {
                         warn!("failed to try_send to order bid producer, trying again");
                         continue;
                     }
                     TrySendError::Disconnected(_) => {
-                        error!("order producer is disconnected");
+                        error!("depth producer within ExchangeStream disconnected while streaming");
                         return Poll::Ready(Some(WSStreamState::SenderError));
                     }
                 }
             }
         }
-
         let Some(mut orderbooks) = this.ws_connection_orderbook_reader.as_mut().as_pin_mut() else {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream))
         };
-
-        // lets loop through our stream to see whats ready and check the ready for an option that
-        // has some value. if the option has a value check if its a ws message or ws error. if
-        // it is a ws error return Poll::Pending if its not an error return poll ready
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
             match stream_option {
                 Some(ws_result) => match ws_result {
                     Ok(ws_message) => {
+                        // TODO: Need to take multiplie exchanges here
                         debug!("received order: {}\n", ws_message);
                         let Some(order_update) = deserialize_message_to_orders(ws_message);
                         {
@@ -292,7 +297,25 @@ impl Stream for ExchangeWS {
                             this.buffer.push_back(order_update.1);
                         {
                     }
-                    Err(ws_error) => return Poll::Ready(Some(WSStreamState::WSError(ws_error))),
+                    (2, ws_message) => {
+                        if let Ok(depth_update) = WSDepthUpdateBinance::try_from(ws_message) {
+                            let depths = depth_update.depths(2);
+                            let woven_depths = interleave(depths.0, depths.1);
+                            this.buffer.extend(woven_depths);
+                        } else {
+                            warn!("failed to deserialize the object.");
+                        }
+                    }
+                    (3, ws_message) => {
+                        if let Ok(depth_update) = WSDepthUpdateByBit::try_from(ws_message) {
+                            let depths = depth_update.depths(3);
+                            let woven_depths = interleave(depths.0, depths.1);
+                            this.buffer.extend(woven_depths);
+                        } else {
+                            warn!("failed to deserialize the object.");
+                        }
+                    }
+                    _ => {}
                 },
                 None => {
                     break;

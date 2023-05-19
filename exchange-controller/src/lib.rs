@@ -90,7 +90,7 @@ impl ExchangeController {
         let ws_stream_result = self.handle_orders().await;
         let _ = ws_stream_results.unwrap();
     }
-    pub fn exchange(&mut self) -> Option<Box<ExchangeWS>> {
+    pub fn pop_exchange(&mut self) -> Option<Box<ExchangeWS>> {
         return self.exchanges.pop();
     }
 }
