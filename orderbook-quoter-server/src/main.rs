@@ -3,6 +3,7 @@ use std::error::Error;
 use futures::StreamExt;
 use num_cpus;
 use rayon::ThreadPool;
+use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tokio::time::{sleep as async_sleep, Duration as async_duration};
 
@@ -18,6 +19,14 @@ use tracing_subscriber;
 use exchange_controller::ExchangeController;
 
 use config::{read_yaml_config, Config};
+
+fn f64(num: usize) -> f64 {
+    num as f64
+}
+
+fn usize(float_num: f64) -> usize {
+    float_num as usize
+}
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -56,14 +65,6 @@ fn main() {
     }
 }
 
-fn f64(num: usize) -> f64 {
-    num as f64
-}
-
-fn usize(float_num: f64) -> usize {
-    float_num as usize
-}
-
 fn orderbook_quoter_server(
     config: &Config,
     async_runtime: &mut Runtime,
@@ -75,7 +76,7 @@ fn orderbook_quoter_server(
     let mut exchange_controller =
         ExchangeController::new(&config.exchanges, orderbook_producer).unwrap();
     info!("created exchange controller");
-    async_handle.block_on(async move {
+    let handle = async_handle.block_on(async move {
         exchange_controller.boot_exchanges().await;
         async_sleep(async_duration::from_secs(10)).await;
         while let Some(mut exchange_stream) = exchange_controller.exchange() {
@@ -85,6 +86,9 @@ fn orderbook_quoter_server(
             });
         }
     });
+
+    async_runtime.shutdown_timeout(Duration::from_millis(100));
+
     // TODO: wait for tasks to finish
 
     info!("quoter server is shutting down");
