@@ -1,28 +1,20 @@
-use futures::future::join_all;
-use futures::StreamExt;
-use rayon::prelude::*;
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use std::error::Error;
+
+use num_cpus;
+use rayon::ThreadPool;
 use tokio::runtime::{Builder, Runtime};
 
 use std::env;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
 
 use crossbeam_channel::bounded;
 
-use num_cpus;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
+use tracing_subscriber;
 
-use exchange_controller::ExchangeController;
 // use orderbook::OrderBook;
+use exchange_controller::ExchangeController;
 
 use config::{read_yaml_config, Config};
-
-use std::error::Error;
-
-use serde::{Deserialize, Serialize};
-use tracing_subscriber;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -103,16 +95,3 @@ fn orderbook_quoter_server(
     });
     */
 }
-
-/*
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = QuoterServer {};
-    Server::builder()
-        .add_service(pb::echo_server::QuoterServer::new(server))
-        .serve("[::1]:50051".to_socket_addrs().unwrap().next().unwrap())
-        .await
-        .unwrap();
-
-    Ok(())
-}
-*/

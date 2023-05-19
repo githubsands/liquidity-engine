@@ -1,42 +1,27 @@
-use std::collections::VecDeque;
+use std::convert::Infallible;
+use std::error::Error;
+use std::{pin::Pin, task::Poll};
 
-use crossbeam_channel::{bounded, Sender, TrySendError};
+use serde_json::{from_str, to_string as jsonify};
 
-use tokio::io::ReadHalf;
+use pin_project_lite::pin_project;
 
-use serde_json::{from_str, to_string as jsonify, Value};
-
-use futures::task::Context;
-
+use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
+use futures_util::sink::SinkExt;
+use tokio::net::TcpStream;
 use tokio_tungstenite::{
     connect_async_with_config, tungstenite::protocol::Message,
     tungstenite::protocol::WebSocketConfig, MaybeTlsStream, WebSocketStream,
 };
 
-use tokio::net::TcpStream;
-
-use config::ExchangeConfig;
-use order::{BinanceOrder, Order, OrderBookUpdateBinance, SnapShotDepthResponseBinance};
-
-use quoter_errors::{ErrorHotPath, ErrorInitialState};
-
-use std::{pin::Pin, task::Poll};
-
-use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
-use pin_project_lite::pin_project;
-
-use futures_util::{future, pin_mut};
+use bounded_vec_deque::BoundedVecDeque;
+use crossbeam_channel::{Sender, TrySendError};
+use reqwest::{Client, Error as HTTPError};
 use tracing::{debug, error, info, warn};
 
-use bounded_vec_deque::BoundedVecDeque;
-
-use native_tls::TlsConnector;
-
-use futures_core::stream::TryStream;
-
-use reqwest::{Client, Error as HTTPError};
-
-use futures_util::sink::SinkExt;
+use config::ExchangeConfig;
+use market_object::{DepthUpdate, HTTPSnapShotDepthResponseBinance, WSDepthUpdateBinance};
+use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
@@ -51,14 +36,13 @@ pin_project! {
         orderbook_subscription_message: String,
 
         #[pin]
-        buffer: Box<BoundedVecDeque<Order>>,
-        snap_shot_buffer: Box<BoundedVecDeque<Order>>,
+        buffer: BoundedVecDeque<DepthUpdate>,
         #[pin]
         ws_connection_orderbook: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
         #[pin]
         ws_connection_orderbook_reader: Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
 
-        orders_producer: Sender<Order>,
+        depths_producer: Sender<DepthUpdate>,
 
         http_client: Option<Client>,
     }
@@ -67,7 +51,7 @@ pin_project! {
 impl ExchangeWS {
     pub fn new(
         exchange_config: &ExchangeConfig,
-        orders_producer: Sender<Order>,
+        orders_producer: Sender<DepthUpdate>,
         http_client_option: bool,
     ) -> Result<Box<Self>, ErrorInitialState> {
         let mut http_client: Option<Client> = None;
@@ -87,10 +71,9 @@ impl ExchangeWS {
             )
             .unwrap(),
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-            buffer: Box::new(BoundedVecDeque::new(exchange_config.buffer_size)),
-            snap_shot_buffer: Box::new(BoundedVecDeque::new(exchange_config.buffer_size)),
+            buffer: BoundedVecDeque::new(exchange_config.buffer_size),
             ws_connection_orderbook_reader: None,
-            orders_producer: orders_producer,
+            depths_producer: orders_producer,
             http_client: http_client,
         };
         Ok(Box::new(exchange))
@@ -121,40 +104,72 @@ impl ExchangeWS {
         };
         Ok(())
     }
-    pub async fn run_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run_snapshot(&mut self) -> Result<(), Box<dyn Error>> {
         let snapshot_orders = self.orderbook_snapshot().await?;
-        info!("received snapshot orders - now buffering the orders");
-        self.buffer_snapshot_orders(snapshot_orders).await;
-        info!("finished buffering the orders");
-        Ok(())
+        info!("received snapshot orders - sending orders to the orderbook");
+        let mut asks = futures::stream::iter(snapshot_orders.0);
+        let mut bids = futures::stream::iter(snapshot_orders.1);
+
+        // TODO: Handle this logic correctly.  i.e retries, more defined errors, ideally with
+        // the use of no heap, understanding the unknown state, or possibly use write_all over
+        // this select way of doing things
+        loop {
+            info!("sending snapshot depths to the orderbook");
+            tokio::select! {
+                Some(ask_depth) = asks.next() => {
+                    if let Err(channel_error) = self.depths_producer.try_send(ask_depth) {
+                        warn!("failed to send snapshot depths to the orderbook");
+                        return Err(Box::new(ErrorInitialState::Snapshot(channel_error.to_string())));
+                    }
+                }
+                Some(bid_depth) = bids.next() => {
+                    if let Err(channel_error) = self.depths_producer.try_send(bid_depth) {
+                        warn!("failed to send snapshot depths to the orderbook");
+                        return Err(Box::new(ErrorInitialState::Snapshot(channel_error.to_string())));
+                    }
+                }
+                else => {
+                    warn!("unknown state - continue streaming snapshot depths");
+                    continue
+                }
+            }
+        }
     }
+
     // TODO: Don't return dynamic errors here - this hack was used to deal with Reqwest errors
     // specifically. This isn't necessarily in the hotpath as is but in future developments the
     // orderbook may need to be rebuilt when we are in a steady/chaotic state
     async fn orderbook_snapshot(
         &mut self,
-    ) -> Result<(Vec<Order>, Vec<Order>), Box<dyn std::error::Error>> {
+    ) -> Result<
+        (
+            impl Iterator<Item = DepthUpdate>,
+            impl Iterator<Item = DepthUpdate>,
+        ),
+        Box<dyn std::error::Error>,
+    > {
         info!("curling snap shot from {}", self.snapshot_uri);
         let req_builder = self
             .http_client
             .as_ref()
             .unwrap()
             .get(self.snapshot_uri.clone());
-        info!("area one");
-        // TODO: Implement http retries here
         let snapshot_response_result = req_builder.send().await;
         match snapshot_response_result {
             Ok(snapshot_response) => match self.exchange_name {
                 0 => {
                     let body = snapshot_response.text().await?;
-                    let snapshot: SnapShotDepthResponseBinance = from_str(&body)?;
+                    let snapshot: HTTPSnapShotDepthResponseBinance = from_str(&body)?;
                     info!("finished receiving snaps for {}", self.exchange_name);
-                    Ok(snapshot.orders())
+                    let snapshot_depths = snapshot.depths(0);
+                    Ok(snapshot_depths)
                 }
                 1 => {
-                    let snapshot: SnapShotDepthResponseBinance = snapshot_response.json().await?;
+                    let snapshot: HTTPSnapShotDepthResponseBinance =
+                        snapshot_response.json().await?;
                     info!("finished receiving snaps for {}", self.exchange_name);
-                    Ok(snapshot.orders())
+                    let snapshot_depths = snapshot.depths(1);
+                    Ok(snapshot_depths)
                 }
                 _ => {
                     error!(
@@ -172,17 +187,6 @@ impl ExchangeWS {
                 error!("failed to reconcile snapshot result: {}", err);
                 return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
             }
-        }
-    }
-    // buffer_snap_shot_orders buffers the snapshot orders
-    // TODO: Implement this in one function so we don't have to clone a dynamically sized type
-    // around ((Vec<Order>, Vec<Order>) or create another future or the on the stack.  Note that
-    // async functions cannot be inlined
-    // TODO: Can these push_backs be chunked?
-    async fn buffer_snapshot_orders(&mut self, orders: (Vec<Order>, Vec<Order>)) {
-        for (order_bids, order_asks) in orders.0.into_iter().zip(orders.1) {
-            self.snap_shot_buffer.push_back(order_bids);
-            self.snap_shot_buffer.push_back(order_asks);
         }
     }
     async fn subscribe_orderbooks(
@@ -230,7 +234,6 @@ impl ExchangeWS {
             }
             Err(_) => {
                 return Err(ErrorHotPath::ExchangeWSReconnectError(
-                    // TODO: Pass down wserrors here.
                     "Failed to reconnect to Exchange WS Server".to_string(),
                 ));
             }
@@ -257,9 +260,9 @@ impl Stream for ExchangeWS {
         // Check if we have any orders in the buffer if we do try_send them forward to the
         // orderbook. At t=0 or if we have exchange faults this will always pass.
         let mut this = self.project();
-        debug!("waiting for items\n");
-        while let Some(order) = this.buffer.pop_front() {
-            if let Err(channel_error) = this.orders_producer.try_send(order) {
+        debug!("waiting for items for exchange: {}\n", this.exchange_name);
+        while let Some(depth) = this.buffer.pop_front() {
+            if let Err(channel_error) = this.depths_producer.try_send(depth) {
                 match channel_error {
                     TrySendError::Full(_) => {
                         warn!("failed to try_send to order bid producer, trying again");
@@ -286,65 +289,26 @@ impl Stream for ExchangeWS {
                 Some(ws_result) => match ws_result {
                     Ok(ws_message) => {
                         debug!("received order: {}\n", ws_message);
-                        let Some(order_update) = deserialize_message_to_orders(ws_message);
-                        {
-                            this.buffer.push_back(order_update.0);
-                            this.buffer.push_back(order_update.1);
-                        {
+                        let depth_result: Result<WSDepthUpdateBinance, Infallible> =
+                            WSDepthUpdateBinance::try_from(ws_message);
+                        match depth_result {
+                            Ok(depth_update) => {
+                                let depths = depth_update.depths(*this.exchange_name);
+                                for (bids, asks) in depths.0.into_iter().zip(depths.1) {
+                                    this.buffer.push_back(bids);
+                                    this.buffer.push_back(asks);
+                                }
+                            }
+                            Err(error) => {
+                                warn!("failed to deserialize the object. received {}", error)
+                            }
+                        }
                     }
                     Err(ws_error) => return Poll::Ready(Some(WSStreamState::WSError(ws_error))),
                 },
-                None => {
-                    break;
-                }
+                None => break,
             }
         }
-    }
-    Poll::Pending
-
-}
-}
-
-// TODO: Handle errors rather then going with an option
-fn deserialize_message_to_orders(message: Message) -> Option<(Order, Order)> {
-    if let Message::Text(text) = message {
-        let json: Value = serde_json::from_str(&text).ok()?;
-        let update: OrderBookUpdateBinance = serde_json::from_value(json).ok()?;
-        return Some(update.split_update());
-    }
-    None
-}
-
-// TODO: Great place to possibly do a macro for deserializing rather then going through a match
-// statement.
-/*
-fn deserialize_message_to_orders(
-    exchange: &str,
-    message: Message,
-) -> Result<(Order, Order), ErrorHotPath> {
-    if let Message::Text(text) = message {
-        match exchange {
-            "bybit" => {
-                let json: Option<Value> = serde_json::from_str(&text).ok();
-                let order_update: Option<OrderBookUpdateByBit> =
-                    serde_json::from_value(json.unwrap()).ok();
-                Ok(order_update.unwrap().split_update())
-            }
-            "binance" => {
-                let json: Option<Value> = serde_json::from_str(&text).ok();
-                let order_update: Option<OrderBookUpdateBinance> =
-                    serde_json::from_value(json.unwrap()).ok();
-                Ok(order_update.unwrap().split_update())
-            }
-            _ => {
-                warn!("exchange {} not implemented", exchange);
-                Err(ErrorHotPath::Serialization(
-                    "failed to serialize".to_string(),
-                ))
-            }
-        }
-    } else {
-        Err(ErrorHotPath::ReceivedNonTextMessageFromExchange)
+        Poll::Pending
     }
 }
-*/
