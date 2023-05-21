@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package lib;
+
+message QuoterRequest {
+}
+
+message Quote {
+    string location = 1;
+    double price = 2;
+    double quantity = 3;
+}
+
+message QuoterResponse {
+    repeated Quote best_ten_bids = 1;
+    repeated Quote best_ten_asks = 2;
+    double spread = 3;
+}
+
+service Quoter {
+    rpc ServerStreamingQuoter(QuoterRequest) returns (stream QuoterResponse) {}
+}
