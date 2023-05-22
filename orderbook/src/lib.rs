@@ -1,5 +1,6 @@
 use crossbeam_channel::Sender;
 use rustc_hash::FxHashMap;
+use tokio::sync::mpsc::Sender as TokioSender;
 use tracing::info;
 
 use ordered_float::OrderedFloat;
@@ -18,8 +19,10 @@ use std::f64::NAN;
 
 use thin_vec::ThinVec;
 
+use config::OrderbookConfig;
 use market_object::DepthUpdate;
 use quoter_errors::ErrorHotPath;
+use ring_buffer::RingBuffer;
 
 pub struct Stack<T> {
     head: Link<T>,
@@ -76,37 +79,42 @@ impl<T> Drop for Stack<T> {
 }
 
 struct OrderBook<'a> {
-    exchange_count: usize,
+    exchange_count: f64,
     level_increment: f64, // level increment is the basis points for each of each depth difference
     // for this asset
+    ring_buffer: RingBuffer,
     best_deal_bids_level: f64,
     best_deal_asks_level: f64,
     asks: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
-    pub bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
+    bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
+    quote_producer: TokioSender<Quotes>,
 }
 
 impl<'a> OrderBook<'a> {
-    pub fn new(exchange_count: usize, depth: usize, current_price: usize) -> OrderBook<'a> {
-        let ask_level_range: usize = current_price + depth;
+    pub fn new(
+        quote_producer: TokioSender<Quotes>,
+        config: OrderbookConfig,
+    ) -> (OrderBook<'a>, Sender<DepthUpdate>) {
+        let ask_level_range: i64 = (config.mid_price + config.depth) as i64;
         let mut asks = FxHashMap::<OrderedFloat<f64>, Stack<VolumeNode<'a>>>::default();
-        for i in current_price..ask_level_range {
-            let level: f64 = i as f64;
+        for i in config.mid_price..ask_level_range {
+            let level: i64 = i as i64;
             let mut volume_nodes: Stack<VolumeNode<'a>> = Stack::new();
-            for _ in 0..exchange_count {
+            for _ in 0..config.exchange_count {
                 volume_nodes.push(VolumeNode {
                     volume: 0.0,
                     location: 0,
                     _phantom: PhantomData,
                 });
             }
-            asks.insert(OrderedFloat(level), volume_nodes);
+            asks.insert(OrderedFloat(level as f64), volume_nodes);
         }
-        let bid_level_range: usize = current_price - depth;
+        let bid_level_range: i64 = config.mid_price - config.depth;
         let mut bids = FxHashMap::<OrderedFloat<f64>, Stack<VolumeNode<'a>>>::default();
-        for j in bid_level_range..current_price {
+        for j in bid_level_range..config.mid_price {
             let level: f64 = j as f64;
             let mut volume_nodes: Stack<VolumeNode<'a>> = Stack::new();
-            for _ in 0..exchange_count {
+            for _ in 0..config.exchange_count {
                 volume_nodes.push(VolumeNode {
                     volume: 0.0,
                     location: 0,
@@ -115,15 +123,29 @@ impl<'a> OrderBook<'a> {
             }
             bids.insert(OrderedFloat(level), volume_nodes);
         }
+        let (ring_buffer, depth_producers) = RingBuffer::new(config.ring_buffer);
         let orderbook: OrderBook<'a> = OrderBook {
-            exchange_count: exchange_count,
+            ring_buffer: ring_buffer,
+            exchange_count: config.exchange_count as f64,
             level_increment: 0.0,
             best_deal_bids_level: 0.0,
             best_deal_asks_level: 0.0,
             asks: asks,
             bids: bids,
+            quote_producer: quote_producer,
         };
-        return orderbook;
+        (orderbook, depth_producers)
+    }
+    fn consume_depths(&mut self) {
+        self.ring_buffer.consume();
+    }
+    fn receive_depths(&mut self) {
+        while let Some(depth_update) = self.ring_buffer.pop_depth() {
+            // TODO: insert simple locking for now.
+            if let Ok(_) = self.update_book(depth_update) {
+                self.quote();
+            }
+        }
     }
     fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         match depth_update.k {
@@ -133,7 +155,7 @@ impl<'a> OrderBook<'a> {
                     self.best_deal_asks_level = depth_update.p
                 }
                 let mut current_seek: usize = 0;
-                let max_seek = self.exchange_count;
+                let max_seek = self.exchange_count as usize;
                 let level_list = self.asks.get_mut(&OrderedFloat(depth_update.p)).unwrap();
                 let mut current_volume = 0.0;
                 let mut current_location = 0;
@@ -182,7 +204,7 @@ impl<'a> OrderBook<'a> {
                     self.best_deal_asks_level = depth_update.p
                 }
                 let mut current_seek: usize = 0;
-                let max_seek = self.exchange_count;
+                let max_seek = self.exchange_count as usize;
                 let level_list = self.bids.get_mut(&OrderedFloat(depth_update.p)).unwrap();
                 let mut current_volume = 0.0;
                 let mut current_location = 0;
@@ -234,7 +256,7 @@ impl<'a> OrderBook<'a> {
         let mut current_seek: usize = 0;
         let mut current_level = self.best_deal_asks_level;
         let mut current_deal_index = 0;
-        while current_seek < self.exchange_count {
+        while current_seek < self.exchange_count as usize {
             let node = self
                 .bids
                 .get(&OrderedFloat(current_level))
@@ -277,7 +299,7 @@ impl<'a> OrderBook<'a> {
         let mut current_seek: usize = 0;
         let mut current_level = self.best_deal_asks_level;
         let mut current_deal_index = 0;
-        while current_seek < self.exchange_count {
+        while current_seek < self.exchange_count as usize {
             let node = self
                 .bids
                 .get(&OrderedFloat(current_level))
@@ -316,15 +338,17 @@ impl<'a> OrderBook<'a> {
         return deals;
     }
     // TODO: get_quotes_$side should be ran in their own thread.
-    pub fn get_quote_bids(&mut self) -> Quotes {
+    // TODO: handle channel errors
+    pub async fn quote(&mut self) -> Result<(), ErrorHotPath> {
         let ask_deals = self.get_quotes_asks();
         let bid_deals = self.get_quotes_bids();
         // ask_deals should always be higher then bid deals. if not we have a problem
-        Quotes {
+        self.quote_producer.send(Quotes {
             spread: ask_deals.get(0).unwrap().price - bid_deals.get(0).unwrap().price,
             best_asks: ask_deals,
             best_bids: bid_deals,
-        }
+        });
+        Ok(())
     }
 }
 
@@ -339,23 +363,3 @@ pub struct Quotes {
     pub best_bids: ThinVec<Deal>,
     pub best_asks: ThinVec<Deal>,
 }
-
-/*
-pub struct Coordinator<'a> {
-    order_boo
-}k: &'a mut OrderBook<'a>, // quote_producer: Receiver<Quote>,
-                                       // depth_update_consumer: Sender<DepthUpdate>,
-}
-*/
-
-/*
-impl<'a> Coordinator<'a> {
-    fn new() -> Coordinator<'a> {
-        let order_book_allocation: &'a mut OrderBook =
-            Arena::new().alloc(OrderBook::new(2, 5000, 27000));
-        Coordinator {
-            order_book: order_book_allocation,
-        }
-    }
-}
-*/
