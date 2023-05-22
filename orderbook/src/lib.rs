@@ -73,6 +73,8 @@ impl<T> Drop for Stack<T> {
 
 struct OrderBook<'a> {
     exchange_count: usize,
+    best_deal_bids_level: f64,
+    best_deal_asks_level: f64,
     asks: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
     bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
 }
@@ -109,6 +111,8 @@ impl<'a> OrderBook<'a> {
         }
         let orderbook: OrderBook<'a> = OrderBook {
             exchange_count: exchange_count,
+            best_deal_bids_level: 0.0,
+            best_deal_asks_level: 0.0,
             asks: asks,
             bids: bids,
         };
@@ -116,8 +120,11 @@ impl<'a> OrderBook<'a> {
     }
     fn update_book(&mut self, depth_update: DepthUpdate) {
         match depth_update.k {
-            // best deals are defined by how much liquidity at an exchange
             0 => {
+                // we want the highest value on the bid side -- this value is closer to the spread
+                if depth_update.p > self.best_deal_asks_level {
+                    self.best_deal_asks_level = depth_update.p
+                }
                 let mut current_seek: usize = 0;
                 let max_seek = self.exchange_count;
                 let level_list = self.asks.get_mut(&OrderedFloat(depth_update.p)).unwrap();
@@ -162,6 +169,10 @@ impl<'a> OrderBook<'a> {
                 }
             }
             1 => {
+                // we want the lowest value on the asks side -- this value is closer to the spread
+                if depth_update.p < self.best_deal_bids_level {
+                    self.best_deal_asks_level = depth_update.p
+                }
                 let mut current_seek: usize = 0;
                 let max_seek = self.exchange_count;
                 let level_list = self.bids.get_mut(&OrderedFloat(depth_update.p)).unwrap();
