@@ -1,0 +1,12 @@
+[package]
+name = "ring-buffer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crossbeam-channel = "0.5.8"
+market-objects = { path = "../market-objects"}
+config = { path = "../config"}
+tracing = "0.1.37"

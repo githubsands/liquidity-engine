@@ -1,8 +1,14 @@
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub struct Deal {
     pub p: f64,
     pub q: f64,
     pub l: u8,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Deals {
+    pub asks: [Deal; 10],
+    pub bids: [Deal; 10],
 }
 
 #[derive(Copy, Clone, Debug)]

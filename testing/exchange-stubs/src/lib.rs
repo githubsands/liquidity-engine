@@ -134,7 +134,7 @@ impl ExchangeServer {
     ) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         let mut depth_generator = DepthMessageGenerator::default();
         self.depth_producer
-            .try_send(depth_generator.depth_message_random(1))?;
+            .try_send(depth_generator.depth_message_random())?;
         Ok(())
     }
     async fn fanout_depth(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {

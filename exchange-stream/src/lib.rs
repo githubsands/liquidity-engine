@@ -130,10 +130,44 @@ impl ExchangeStream {
             }
         };
     }
+
+    pub async fn run_snapshot(&mut self) {
+        self.buffer_websocket_depths = true;
+        let mut success = false;
+        while !success {
+            sleep(Duration::from_secs(2)).await;
+            let pull_result = self.pull_depths().await;
+            match pull_result {
+                Ok(mut depths) => {
+                    while let Some(depth) = depths.next() {
+                        self.buffer.push(depth);
+                        self.next().await; // we must keep processing  snapshot depths and depths from the websocket
+                                           // but this time the websocket depths are stored in their own buffer
+                                           // to be sequenced
+                    }
+                    success = true;
+                }
+                Err(pull_error) => {
+                    warn!(
+                        "failed to get websocket depths from exchange {}",
+                        pull_error
+                    )
+                }
+            }
+        }
+    }
+
+    pub async fn push_buffered_ws_depths(&mut self) {
+        while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
+            self.buffer.push(websocket_depth);
+        }
+        self.buffer_websocket_depths = false;
+    }
+
     pub async fn run(&mut self) {
         if let Some(trigger) = &mut self.snapshot_trigger {
             tokio::select! {
-                    _ = trigger.changed() => {
+                    _ = trigger.changed()=> {
                         self.buffer_websocket_depths = true;
                         let mut success = false;
                         while !success {
@@ -157,6 +191,8 @@ impl ExchangeStream {
                         // we are done push snapshot depths to the orderbook - turn this buffer off
                         // and push the buffer websocket depths to the orderbook
                         self.buffer_websocket_depths = false;
+
+
                         while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
                             self.buffer.push(websocket_depth);
                             self.next().await;

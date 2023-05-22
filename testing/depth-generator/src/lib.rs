@@ -2,8 +2,6 @@ use market_objects::DepthUpdate;
 use rand::{thread_rng, Rng};
 use rand_distr::{Distribution, Normal};
 
-use itertools::interleave;
-
 extern crate rand;
 
 #[derive(Clone)]
@@ -34,8 +32,9 @@ impl DepthMessageGenerator {
             tick_size,
         }
     }
-    pub fn depth_message_random(&mut self, location: u8) -> DepthUpdate {
+    pub fn depth_message_random(&mut self) -> DepthUpdate {
         let kind: u8;
+        let location: u8;
         let _ = match rand::random() {
             true => {
                 kind = 0;
@@ -44,17 +43,29 @@ impl DepthMessageGenerator {
                 kind = 1;
             }
         };
+        let _ = match rand::random() {
+            true => {
+                location = 1;
+            }
+            false => {
+                location = 2;
+            }
+        };
+
         let normal = Normal::new(0.0, 1.0).unwrap();
         let volume_diff = normal.sample(&mut thread_rng()) * self.vol_std;
         let price_diff = normal.sample(&mut thread_rng()) * self.price_std;
         let volume = (self.volume + volume_diff).max(0.0);
         let price: f64;
-        let _ = match rand::random() {
-            true => {
+        match kind {
+            0 => {
                 price = self.price - price_diff;
             }
-            false => {
+            1 => {
                 price = self.price + price_diff;
+            }
+            _ => {
+                panic!()
             }
         };
         DepthUpdate {
@@ -106,10 +117,6 @@ impl DepthMessageGenerator {
     fn round_to_hundreth(n: f64) -> f64 {
         (n * 100.0).round() / 100.0
     }
-    fn round(num: f64, place: f64) -> f64 {
-        (num * place).round() / (place)
-    }
-
     pub fn depth_balanced_orderbook(
         &mut self,
         depth: usize,
@@ -150,7 +157,6 @@ impl DepthMessageGenerator {
         }
         (asks, bids)
     }
-
     pub fn depth_market_continuity_from_existing_book(
         &self,
         snapshot: (Vec<DepthUpdate>, Vec<DepthUpdate>),
@@ -182,7 +188,6 @@ impl DepthMessageGenerator {
         }
         return (asks, bids);
     }
-
     pub fn depth_generate_geometric_brownian_motion_upward_trend(
         &self,
         exchanges: u8,
@@ -351,7 +356,7 @@ impl Default for DepthMessageGenerator {
     fn default() -> Self {
         Self {
             volume: 400.0,
-            price: 27000.0,
+            price: 2700.0,
             vol_std: 200.0,
             price_std: 0.1,
             level_diff: 0.01,
