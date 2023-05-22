@@ -83,6 +83,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -640,13 +648,16 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bounded-vec-deque",
+ "config",
  "crossbeam-channel",
  "futures",
  "market-object",
  "ordered-float",
  "quoter-errors",
+ "ring-buffer",
  "rustc-hash",
  "thin-vec",
+ "tokio",
  "tracing",
  "typed-arena",
 ]
@@ -794,6 +805,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ring-buffer"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "crossbeam-channel",
+ "market-object",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -901,6 +921,19 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9d684e3ec7de3bf5466b32bd75303ac16f0736426e5a4e0d6e489559ce1249c"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -1184,6 +1217,12 @@ checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1865806a559042e51ab5414598446a5871b561d21b6764f2eabb0dd481d880a6"
 
 [[package]]
 name = "url"
