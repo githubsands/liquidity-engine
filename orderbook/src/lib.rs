@@ -2,10 +2,6 @@ use crossbeam_channel::Sender;
 use rustc_hash::FxHashMap;
 use tracing::info;
 
-use config::OrderbookConfig;
-use market_object::DepthUpdate;
-use ring_buffer::RingBuffer;
-
 use ordered_float::OrderedFloat;
 
 use bounded_vec_deque::BoundedVecDeque;
@@ -74,13 +70,13 @@ impl<T> Drop for Stack<T> {
     }
 }
 
-pub struct OrderBook<'a> {
+struct OrderBook<'a> {
     asks: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
     bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
 }
 
 impl<'a> OrderBook<'a> {
-    pub fn new(exchange_count: usize, depth: usize, current_price: usize) -> OrderBook<'a> {
+    fn new(exchange_count: usize, depth: usize, current_price: usize) -> OrderBook<'a> {
         let ask_level_range: usize = current_price + depth;
         let mut asks = FxHashMap::<OrderedFloat<f64>, Stack<VolumeNode<'a>>>::default();
         for i in current_price..ask_level_range {
@@ -109,19 +105,28 @@ impl<'a> OrderBook<'a> {
             }
             bids.insert(OrderedFloat(level), volume_nodes);
         }
-        let orderbook_allocation: Arena<OrderBook> = Arena::<OrderBook>::new();
-        let orderbook: OrderBook<'a> = Box::new(OrderBook {
+        let orderbook: OrderBook<'a> = OrderBook {
             asks: asks,
             bids: bids,
-        });
+        };
         return orderbook;
     }
+    fn update_book(depth_update: DepthUpdate) {}
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_default_order_book() {
-        let order_book: OrderBook = Default::default();
+pub struct Coordinator<'a> {
+    order_book: &'a mut OrderBook<'a>, // quote_producer: Receiver<Quote>,
+                                       // depth_update_consumer: Sender<DepthUpdate>,
+}
+
+/*
+impl<'a> Coordinator<'a> {
+    fn new() -> Coordinator<'a> {
+        let order_book_allocation: &'a mut OrderBook =
+            Arena::new().alloc(OrderBook::new(2, 5000, 27000));
+        Coordinator {
+            order_book: order_book_allocation,
+        }
     }
 }
+*/
