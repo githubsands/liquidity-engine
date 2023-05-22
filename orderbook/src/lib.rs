@@ -118,7 +118,7 @@ impl<'a> OrderBook<'a> {
         };
         return orderbook;
     }
-    fn update_book(&mut self, depth_update: DepthUpdate) {
+    fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), Error
         match depth_update.k {
             0 => {
                 // we want the highest value on the bid side -- this value is closer to the spread
@@ -222,6 +222,15 @@ impl<'a> OrderBook<'a> {
             }
         }
     }
+    fn publish_quote(&self) {
+        // move downward on bid side
+        // move updated on ask side
+        // subtract lowest ask with highest bid
+    }
+    // should be ran in its own thread
+    fn get_quotes_bid(&self) {}
+    // should be ran its own thread
+    fn get_quotes_ask(&self) {}
 }
 
 /*
