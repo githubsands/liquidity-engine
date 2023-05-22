@@ -8,6 +8,7 @@ pub enum ErrorHotPath {
     QuoterGRPCError(String),
     QuoteServerSinkError(String),
     ReceivedNonTextMessageFromExchange,
+    OrderBook,
 }
 
 impl fmt::Display for ErrorHotPath {
@@ -22,6 +23,9 @@ impl fmt::Display for ErrorHotPath {
             ErrorHotPath::Serialization(s) => write!(f, "Serialization error: {}", s),
             ErrorHotPath::ReceivedNonTextMessageFromExchange => {
                 write!(f, "ReceivedNonTextMessage")
+            }
+            ErrorHotPath::OrderBook => {
+                write!(f, "OrderBookError")
             }
         }
     }
