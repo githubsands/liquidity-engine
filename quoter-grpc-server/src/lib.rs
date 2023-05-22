@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{error::Error, io::ErrorKind, net::ToSocketAddrs, pin::Pin};
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
@@ -21,7 +22,21 @@ type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
 
 #[derive(Debug)]
-pub struct QuoterOrderBookServer {}
+pub struct QuoterOrderBookServer {
+    quote_consumer: Receiver<Quotes>,
+}
+
+impl QuoterOrderBookServer {
+    fn new() -> (Self, Sender<Quotes>) {
+        let (quote_producer, mut quote_consumer) = channel(100);
+        (
+            QuoterOrderBookServer {
+                quote_consumer: quote_consumer,
+            },
+            quote_producer,
+        )
+    }
+}
 
 fn match_for_io_error(err_status: &Status) -> Option<&std::io::Error> {
     let mut err: &(dyn Error + 'static) = err_status;
@@ -56,13 +71,14 @@ impl pb::quoter_server::Quoter for QuoterOrderBookServer {
         println!("EchoServer::server_streaming_echo");
         println!("\tclient connected from: {:?}", req.remote_addr());
 
-        // creating infinite stream with requested message
-        let repeat = std::iter::repeat(QuoterResponse {
-            best_ten_asks: vec![],
-            best_ten_bids: vec![],
-            spread: 14.0,
+        let quote = self.quote_consumer.recv().next();
+
+        let quotes = std::iter::repeat(QuoterResponse {
+            best_ten_asks: quote.best_ten_asks,
+            best_ten_bids: quote.best_ten_bids,
+            spread: quote.spread,
         });
-        let mut stream = Box::pin(tokio_stream::iter(repeat).throttle(Duration::from_millis(200)));
+        let mut stream = Box::pin(tokio_stream::iter(quotes).throttle(Duration::from_millis(200)));
 
         // spawn and channel are required if you want handle "disconnect" functionality
         // the `out_stream` will not be polled after client disconnect
