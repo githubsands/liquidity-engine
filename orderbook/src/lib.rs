@@ -10,8 +10,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{hint, thread};
 
+use market_object::DepthUpdate;
 use std::marker::PhantomData;
+use tracing::error;
 use typed_arena::Arena;
+
+use std::f64::NAN;
 
 pub struct Stack<T> {
     head: Link<T>,
@@ -26,7 +30,7 @@ struct Node<T> {
 
 struct VolumeNode<'a> {
     volume: f64,
-    location: f64,
+    location: u8,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -43,7 +47,6 @@ impl<T> Stack<T> {
 
         self.head = Some(new_node);
     }
-
     pub fn pop(&mut self) -> Option<T> {
         self.head.take().map(|node| {
             let node = *node;
@@ -51,11 +54,9 @@ impl<T> Stack<T> {
             node.elem
         })
     }
-
     pub fn peek(&self) -> Option<&T> {
         self.head.as_ref().map(|node| &node.elem)
     }
-
     pub fn peek_mut(&mut self) -> Option<&mut T> {
         self.head.as_mut().map(|node| &mut node.elem)
     }
@@ -71,6 +72,7 @@ impl<T> Drop for Stack<T> {
 }
 
 struct OrderBook<'a> {
+    exchange_count: usize,
     asks: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
     bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
 }
@@ -85,7 +87,7 @@ impl<'a> OrderBook<'a> {
             for _ in 0..exchange_count {
                 volume_nodes.push(VolumeNode {
                     volume: 0.0,
-                    location: 0.0,
+                    location: 0,
                     _phantom: PhantomData,
                 });
             }
@@ -99,25 +101,74 @@ impl<'a> OrderBook<'a> {
             for _ in 0..exchange_count {
                 volume_nodes.push(VolumeNode {
                     volume: 0.0,
-                    location: 0.0,
+                    location: 0,
                     _phantom: PhantomData,
                 });
             }
             bids.insert(OrderedFloat(level), volume_nodes);
         }
         let orderbook: OrderBook<'a> = OrderBook {
+            exchange_count: exchange_count,
             asks: asks,
             bids: bids,
         };
         return orderbook;
     }
-    fn update_book(depth_update: DepthUpdate) {}
+    fn update_book(&mut self, depth_update: DepthUpdate) {
+        match depth_update.k {
+            0 => {
+                let mut current_seek: usize = 0;
+                let max_seek = self.exchange_count;
+                let level_list = self.asks.get_mut(&OrderedFloat(depth_update.p)).unwrap();
+                let mut current_volume = 0.0;
+                let mut to_insert_volume = depth_update.q;
+                while current_seek < max_seek + 1 {
+                    match level_list.peek_mut().unwrap().volume > to_insert_volume {
+                        // our incoming depth update is greater then the first volume
+                        // node update it then update the rest of the list
+                        true => {
+                            current_volume = level_list.peek().unwrap().volume;
+                            if to_insert_volume > current_volume {
+                                // to insert is greater then current depth. insert
+                                // then record then update the to insert depth
+                                level_list.peek_mut().unwrap().volume = to_insert_volume;
+                                to_insert_volume = current_volume;
+                                current_seek = current_seek + 1;
+                            } else {
+                                // current insert is not greater then the current
+                                // depth keep pop to the next node in the linked
+                                // list
+                                _ = level_list.pop().unwrap();
+                                current_seek = current_seek + 1;
+                            }
+                        }
+                        // our incoming depth update is greater then the first. update
+                        // the node. record the the previous volume then go to the next node for
+                        // sorting
+                        false => {
+                            to_insert_volume = level_list.peek_mut().unwrap().volume;
+                            level_list.peek_mut().unwrap().volume = depth_update.q;
+                            _ = level_list.pop().unwrap();
+                            current_seek = current_seek + 1;
+                        }
+                    }
+                }
+            }
+            1 => {}
+            _ => {
+                error!("undefined depth object received")
+            }
+        }
+    }
 }
 
+/*
 pub struct Coordinator<'a> {
-    order_book: &'a mut OrderBook<'a>, // quote_producer: Receiver<Quote>,
+    order_boo
+}k: &'a mut OrderBook<'a>, // quote_producer: Receiver<Quote>,
                                        // depth_update_consumer: Sender<DepthUpdate>,
 }
+*/
 
 /*
 impl<'a> Coordinator<'a> {
