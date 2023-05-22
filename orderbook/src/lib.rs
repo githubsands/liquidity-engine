@@ -116,11 +116,14 @@ impl<'a> OrderBook<'a> {
     }
     fn update_book(&mut self, depth_update: DepthUpdate) {
         match depth_update.k {
+            // best deals are defined by how much liquidity at an exchange
             0 => {
                 let mut current_seek: usize = 0;
                 let max_seek = self.exchange_count;
                 let level_list = self.asks.get_mut(&OrderedFloat(depth_update.p)).unwrap();
                 let mut current_volume = 0.0;
+                let mut current_location = 0;
+                let mut to_insert_location = 0;
                 let mut to_insert_volume = depth_update.q;
                 while current_seek < max_seek + 1 {
                     match level_list.peek_mut().unwrap().volume > to_insert_volume {
@@ -128,11 +131,14 @@ impl<'a> OrderBook<'a> {
                         // node update it then update the rest of the list
                         true => {
                             current_volume = level_list.peek().unwrap().volume;
+                            current_location = level_list.peek_mut().unwrap().location;
                             if to_insert_volume > current_volume {
                                 // to insert is greater then current depth. insert
                                 // then record then update the to insert depth
                                 level_list.peek_mut().unwrap().volume = to_insert_volume;
+                                level_list.peek_mut().unwrap().location = to_insert_location;
                                 to_insert_volume = current_volume;
+                                to_insert_location = current_location;
                                 current_seek = current_seek + 1;
                             } else {
                                 // current insert is not greater then the current
@@ -147,6 +153,7 @@ impl<'a> OrderBook<'a> {
                         // sorting
                         false => {
                             to_insert_volume = level_list.peek_mut().unwrap().volume;
+                            to_insert_location = level_list.peek_mut().unwrap().location;
                             level_list.peek_mut().unwrap().volume = depth_update.q;
                             _ = level_list.pop().unwrap();
                             current_seek = current_seek + 1;
@@ -154,7 +161,51 @@ impl<'a> OrderBook<'a> {
                     }
                 }
             }
-            1 => {}
+            1 => {
+                let mut current_seek: usize = 0;
+                let max_seek = self.exchange_count;
+                let level_list = self.bids.get_mut(&OrderedFloat(depth_update.p)).unwrap();
+                let mut current_volume = 0.0;
+                let mut current_location = 0;
+                let mut to_insert_location = 0;
+                let mut to_insert_volume = depth_update.q;
+                while current_seek < max_seek + 1 {
+                    match level_list.peek_mut().unwrap().volume > to_insert_volume {
+                        // our incoming depth update is greater then the first volume
+                        // node update it then update the rest of the list
+                        true => {
+                            current_volume = level_list.peek().unwrap().volume;
+                            current_location = level_list.peek_mut().unwrap().location;
+                            if to_insert_volume > current_volume {
+                                // to insert is greater then current depth. insert
+                                // then record then update the to insert depth
+                                level_list.peek_mut().unwrap().volume = to_insert_volume;
+                                level_list.peek_mut().unwrap().location = to_insert_location;
+                                to_insert_volume = current_volume;
+                                to_insert_location = current_location;
+                                current_seek = current_seek + 1;
+                            } else {
+                                // current insert is not greater then the current
+                                // depth keep pop to the next node in the linked
+                                // list
+                                _ = level_list.pop().unwrap();
+                                current_seek = current_seek + 1;
+                            }
+                        }
+                        // our incoming depth update is greater then the first. update
+                        // the node. record the the previous volume then go to the next node for
+                        // sorting
+                        false => {
+                            to_insert_volume = level_list.peek_mut().unwrap().volume;
+                            to_insert_location = level_list.peek_mut().unwrap().location;
+                            level_list.peek_mut().unwrap().volume = depth_update.q;
+                            _ = level_list.pop().unwrap();
+                            current_seek = current_seek + 1;
+                        }
+                    }
+                }
+            }
+
             _ => {
                 error!("undefined depth object received")
             }
