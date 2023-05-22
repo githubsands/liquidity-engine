@@ -10,12 +10,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{hint, thread};
 
-use market_object::DepthUpdate;
 use std::marker::PhantomData;
 use tracing::error;
 use typed_arena::Arena;
 
 use std::f64::NAN;
+
+use market_object::DepthUpdate;
+use quoter_errors::ErrorHotPath;
 
 pub struct Stack<T> {
     head: Link<T>,
@@ -118,7 +120,7 @@ impl<'a> OrderBook<'a> {
         };
         return orderbook;
     }
-    fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), Error
+    fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         match depth_update.k {
             0 => {
                 // we want the highest value on the bid side -- this value is closer to the spread
@@ -167,6 +169,7 @@ impl<'a> OrderBook<'a> {
                         }
                     }
                 }
+                Ok(())
             }
             1 => {
                 // we want the lowest value on the asks side -- this value is closer to the spread
@@ -215,22 +218,12 @@ impl<'a> OrderBook<'a> {
                         }
                     }
                 }
+                Ok(())
             }
 
-            _ => {
-                error!("undefined depth object received")
-            }
+            _ => Err(ErrorHotPath::OrderBook),
         }
     }
-    fn publish_quote(&self) {
-        // move downward on bid side
-        // move updated on ask side
-        // subtract lowest ask with highest bid
-    }
-    // should be ran in its own thread
-    fn get_quotes_bid(&self) {}
-    // should be ran its own thread
-    fn get_quotes_ask(&self) {}
 }
 
 /*
