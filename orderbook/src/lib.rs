@@ -17,6 +17,7 @@ use typed_arena::Arena;
 
 use std::f64::NAN;
 
+use thin_str::ThinStr;
 use thin_vec::ThinVec;
 
 use config::OrderbookConfig;
@@ -35,12 +36,14 @@ struct Node<T> {
     next: Link<T>,
 }
 
-struct VolumeNode<'a> {
-    volume: f64,
-    location: u8,
+// TODO: Possibly add current pointer
+struct OrderBookEntry<'a> {
+    pub volume: f64,
+    pub location: u8,
     _phantom: PhantomData<&'a ()>,
 }
 
+// TODO: Possibly get rid of options sense unwrapping can cause branching to occur.
 impl<T> Stack<T> {
     pub fn new() -> Self {
         Stack { head: None }
@@ -85,8 +88,8 @@ struct OrderBook<'a> {
     ring_buffer: RingBuffer,
     best_deal_bids_level: f64,
     best_deal_asks_level: f64,
-    asks: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
-    bids: FxHashMap<OrderedFloat<f64>, Stack<VolumeNode<'a>>>,
+    asks: FxHashMap<OrderedFloat<f64>, Stack<OrderBookEntry<'a>>>,
+    bids: FxHashMap<OrderedFloat<f64>, Stack<OrderBookEntry<'a>>>,
     quote_producer: TokioSender<Quotes>,
 }
 
@@ -96,12 +99,12 @@ impl<'a> OrderBook<'a> {
         config: OrderbookConfig,
     ) -> (OrderBook<'a>, Sender<DepthUpdate>) {
         let ask_level_range: i64 = (config.mid_price + config.depth) as i64;
-        let mut asks = FxHashMap::<OrderedFloat<f64>, Stack<VolumeNode<'a>>>::default();
+        let mut asks = FxHashMap::<OrderedFloat<f64>, Stack<OrderBookEntry<'a>>>::default();
         for i in config.mid_price..ask_level_range {
             let level: i64 = i as i64;
-            let mut volume_nodes: Stack<VolumeNode<'a>> = Stack::new();
+            let mut volume_nodes: Stack<OrderBookEntry<'a>> = Stack::new();
             for _ in 0..config.exchange_count {
-                volume_nodes.push(VolumeNode {
+                volume_nodes.push(OrderBookEntry {
                     volume: 0.0,
                     location: 0,
                     _phantom: PhantomData,
@@ -110,12 +113,12 @@ impl<'a> OrderBook<'a> {
             asks.insert(OrderedFloat(level as f64), volume_nodes);
         }
         let bid_level_range: i64 = config.mid_price - config.depth;
-        let mut bids = FxHashMap::<OrderedFloat<f64>, Stack<VolumeNode<'a>>>::default();
+        let mut bids = FxHashMap::<OrderedFloat<f64>, Stack<OrderBookEntry<'a>>>::default();
         for j in bid_level_range..config.mid_price {
             let level: f64 = j as f64;
-            let mut volume_nodes: Stack<VolumeNode<'a>> = Stack::new();
+            let mut volume_nodes: Stack<OrderBookEntry<'a>> = Stack::new();
             for _ in 0..config.exchange_count {
-                volume_nodes.push(VolumeNode {
+                volume_nodes.push(OrderBookEntry {
                     volume: 0.0,
                     location: 0,
                     _phantom: PhantomData,
