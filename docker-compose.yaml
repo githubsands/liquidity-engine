@@ -1,0 +1,10 @@
+version: '3'
+services:
+  orderbook-quoter-server:
+    build:
+      context: ./orderbook-quoter-server
+      dockerfile: Dockerfile
+  market-maker:
+    build:
+      context: ./market-maker
+      dockerfile: Dockerfile
