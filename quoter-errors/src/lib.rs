@@ -10,7 +10,7 @@ pub enum ErrorHotPath {
     QuoteServerSinkError(String),
     ExchangeStreamSnapshot(String),
     ReceivedNonTextMessageFromExchange,
-    OrderBook,
+    OrderBook(String),
 }
 
 impl fmt::Display for ErrorHotPath {
@@ -26,8 +26,8 @@ impl fmt::Display for ErrorHotPath {
             ErrorHotPath::ReceivedNonTextMessageFromExchange => {
                 write!(f, "ReceivedNonTextMessage")
             }
-            ErrorHotPath::OrderBook => {
-                write!(f, "OrderBookError")
+            ErrorHotPath::OrderBook(s) => {
+                write!(f, "OrderBookError: {}", s)
             }
             ErrorHotPath::ExchangeStreamSnapshot(s) => {
                 write!(f, "HTTPSnapshot error: {}", s)

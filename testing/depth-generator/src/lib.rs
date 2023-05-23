@@ -29,8 +29,9 @@ impl DepthMessageGenerator {
             level_diff,
         }
     }
-    pub fn depth_message_random(&mut self, location: u8) -> DepthUpdate {
+    pub fn depth_message_random(&mut self) -> DepthUpdate {
         let kind: u8;
+        let location: u8;
         let _ = match rand::random() {
             true => {
                 kind = 0;
@@ -39,17 +40,29 @@ impl DepthMessageGenerator {
                 kind = 1;
             }
         };
+        let _ = match rand::random() {
+            true => {
+                location = 1;
+            }
+            false => {
+                location = 2;
+            }
+        };
+
         let normal = Normal::new(0.0, 1.0).unwrap();
         let volume_diff = normal.sample(&mut thread_rng()) * self.vol_std;
         let price_diff = normal.sample(&mut thread_rng()) * self.price_std;
         let volume = (self.volume + volume_diff).max(0.0);
         let price: f64;
-        let _ = match rand::random() {
-            true => {
+        match kind {
+            0 => {
                 price = self.price - price_diff;
             }
-            false => {
+            1 => {
                 price = self.price + price_diff;
+            }
+            _ => {
+                panic!()
             }
         };
         DepthUpdate {
@@ -200,15 +213,6 @@ impl DepthMessageGenerator {
         }
         (asks, bids)
     }
-}
-
-fn round(x: f64, decimals: u32) -> f64 {
-    let y = 10i64.pow(decimals) as f64;
-    (x * y).round() / y
-}
-
-fn round_to_hundreth(num: f64) -> f64 {
-    (num * 100.0).round() / 1000.0
 }
 
 impl Default for DepthMessageGenerator {

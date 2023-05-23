@@ -19,6 +19,7 @@ pub struct OrderbookConfig {
     pub exchange_count: i64,
     pub depth: i64,
     pub mid_price: i64,
+    pub level_diff: f64,
 }
 
 #[derive(Debug, Deserialize)]
