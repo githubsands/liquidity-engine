@@ -13,3 +13,4 @@ async-trait = "0.1.68"
 tokio-stream = "0.1.14"
 futures = "0.3.28"
 h2 = { version = "0.3"}
+internal-objects = { path = "../internal-objects"}

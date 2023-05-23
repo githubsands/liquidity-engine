@@ -18,6 +18,8 @@ use tonic::{transport::Server, Request, Response, Status, Streaming};
 
 use pb::{quoter_server::QuoterServer, QuoterRequest, QuoterResponse};
 
+use internal_objects::{Deal, Quotes};
+
 type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
 

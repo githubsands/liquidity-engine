@@ -321,6 +321,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "internal-objects"
+version = "0.1.0"
+dependencies = [
+ "thin-vec",
+]
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -521,6 +528,7 @@ dependencies = [
  "async-trait",
  "futures",
  "h2",
+ "internal-objects",
  "prost",
  "tokio",
  "tokio-stream",
@@ -645,6 +653,12 @@ name = "sync_wrapper"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
+
+[[package]]
+name = "thin-vec"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aac81b6fd6beb5884b0cf3321b8117e6e5d47ecb6fc89f414cfdcca8b2fe2dd8"
 
 [[package]]
 name = "tokio"
