@@ -20,3 +20,4 @@ ring-buffer =  { path = "../ring-buffer"}
 config =  { path = "../config"}
 thin-vec = "0.2.12"
 tokio = "1.28.1"
+thin_str = "0.1.0"
