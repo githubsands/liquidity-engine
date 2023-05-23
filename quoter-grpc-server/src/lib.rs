@@ -73,7 +73,7 @@ impl pb::quoter_server::Quoter for QuoterOrderBookServer {
         println!("EchoServer::server_streaming_echo");
         println!("\tclient connected from: {:?}", req.remote_addr());
 
-        let quote = self.quote_consumer.recv().next();
+        let quote = self.quote_consumer.recv();
 
         let quotes = std::iter::repeat(QuoterResponse {
             best_ten_asks: quote.best_ten_asks,
