@@ -27,31 +27,40 @@ use ring_buffer::RingBuffer;
 
 use std::collections::VecDeque;
 
-struct Level<DepthEntry> {
-    deque: BoundedVecDeque<DepthEntry>,
+struct Level<DepthUpdate> {
+    exchanges: u8,
+    deque: BoundedVecDeque<DepthUpdate>,
 }
 
-impl Level<DepthEntry> {
-    fn new(exchanges: usize) -> Self {
+impl Level<DepthUpdate> {
+    fn new(exchanges: u8) -> Self {
         Level {
-            deque: BoundedVecDeque::new(exchanges),
+            exchanges: exchanges,
+            deque: BoundedVecDeque::new(exchanges as usize),
         }
     }
-    fn insert(&mut self, entry: DepthEntry) -> impl Iterator<Item = &DepthEntry> {
-        if self.deque.is_empty() || entry.volume > self.deque.front().unwrap().volume {
+    fn insert(&mut self, entry: DepthUpdate) -> impl Iterator<Item = &DepthUpdate> {
+        if self.deque.is_empty() || entry.q > self.deque.front().unwrap().q {
             self.deque.push_front(entry);
         } else {
             let index = self
                 .deque
                 .iter()
-                .position(|current| entry.volume <= current.volume)
+                .position(|current| entry.q <= current.q)
                 .unwrap_or_else(|| self.deque.len());
             self.deque.insert(index, entry);
         }
-        return self.deque.iter().filter(|entry| entry.volume > 0.0);
+        return self.deque.iter().filter(|entry| entry.q > 0.0);
     }
-    fn get_deals(&self) -> impl Iterator<Item = &DepthEntry> {
-        self.deque.iter().filter(|entry| entry.volume > 0.0)
+    fn get_deals(&self, current_deals: u8) -> impl Iterator<Item = &DepthUpdate> {
+        let deal_num = self.exchanges - current_deals;
+        // if we have more exchanges in the vector then the remaining 10 deals only
+        // return a few deals else return all the deals in the level
+        if self.exchanges > deal_num {
+            return self.deque.iter().filter(|entry| entry.q > 0.0);
+        } else {
+            return self.deque.iter().filter(|entry| entry.q > 0.0);
+        }
     }
 }
 
@@ -67,25 +76,25 @@ struct OrderBook {
     ring_buffer: RingBuffer,
     best_deal_bids_level: f64,
     best_deal_asks_level: f64,
-    asks: FxHashMap<OrderedFloat<f64>, Level<DepthEntry>>,
-    bids: FxHashMap<OrderedFloat<f64>, Level<DepthEntry>>,
-    quote_producer: TokioSender<Quotes>,
+    asks: FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
+    bids: FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
+    quote_producer: TokioSender<Quote>,
 }
 
 impl OrderBook {
     pub fn new(
-        quote_producer: TokioSender<Quotes>,
+        quote_producer: TokioSender<Quote>,
         config: OrderbookConfig,
     ) -> (OrderBook, Sender<DepthUpdate>) {
-        let ask_level_range: i64 = (config.mid_price + config.depth) as i64;
-        let mut asks = FxHashMap::<OrderedFloat<f64>, Level<DepthEntry>>::default();
+        let ask_level_range: i64 = config.mid_price + config.depth;
+        let mut asks = FxHashMap::<OrderedFloat<f64>, Level<DepthUpdate>>::default();
         for i in config.mid_price..ask_level_range {
             let level_price: i64 = i as i64;
             let mut level = Level::new(config.exchange_count as usize);
             asks.insert(OrderedFloat(level_price as f64), level);
         }
         let bid_level_range: i64 = config.mid_price - config.depth;
-        let mut bids = FxHashMap::<OrderedFloat<f64>, Level<DepthEntry>>::default();
+        let mut bids = FxHashMap::<OrderedFloat<f64>, Level<DepthUpdate>>::default();
         for j in bid_level_range..config.mid_price {
             let level_price: f64 = j as f64;
             let mut level = Level::new(config.exchange_count as usize);
@@ -119,8 +128,8 @@ impl OrderBook {
     ) -> Result<
         (
             f64,
-            impl Iterator<Item = DepthEntry>,
-            impl Iterator<Item = DepthEntry>,
+            impl Iterator<Item = &DepthUpdate>,
+            impl Iterator<Item = &DepthUpdate>,
         ),
         ErrorHotPath,
     > {
@@ -148,6 +157,7 @@ impl OrderBook {
             _ => Err(ErrorHotPath::OrderBook),
         }
     }
+    /*
     fn get_deals_bids(&mut self) -> impl Iterator<Item = DepthEntry> {
         let mut deal_count: usize = 0;
         let mut ten_deals = Vec::new();
@@ -169,6 +179,7 @@ impl OrderBook {
         }
         return ten_deals;
     }
+    */
     fn get_deals_asks(&mut self) -> impl Iterator<Item = &DepthEntry> {
         let mut deal_count: usize = 0;
         let mut ten_deals = Vec::new();
@@ -178,7 +189,7 @@ impl OrderBook {
                 if let Some(depth_entry) = self.bids.get(&OrderedFloat(current_level)) {
                     // todo: make sure we can only return 10 deals
                     let deals_iterators = depth_entry.get_deals();
-                    // let depth_entries = deals_iterators.collect::<Vec<&DepthEntry>>();
+                    let depth_entries = deals_iterators.collect::<Vec<&DepthEntry>>();
                     deal_count = deal_count + deals_iterators.count();
                     current_level = current_level + 1.0;
                     ten_deals.extend(depth_entries);
