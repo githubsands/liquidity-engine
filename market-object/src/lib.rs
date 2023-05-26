@@ -148,7 +148,6 @@ impl From<Message> for WSDepthUpdateBinance {
         }
     }
 }
-
 impl WSDepthUpdateBinance {
     pub fn depths(
         self,
@@ -163,7 +162,6 @@ impl WSDepthUpdateBinance {
             q: update.quantity, // and a `quantity` field
             l: location,
         });
-
         let ask_updates = self.a.into_iter().map(move |update| DepthUpdate {
             k: 1,
             p: update.price,
@@ -212,7 +210,9 @@ impl HTTPSnapShotDepthResponseBinance {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WSOrderBookUpdateByBit {
+    #[serde(deserialize_with = "as_f64")]
     pub price: f64,
+    #[serde(deserialize_with = "as_f64")]
     pub quantity: f64,
 }
 
