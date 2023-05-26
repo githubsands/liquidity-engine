@@ -158,12 +158,15 @@ impl ExchangeStream {
                     info!("finished receiving snaps for {}", self.exchange_name);
                     Ok(snapshot.orders())
                 }
+                // TODO: Fix opaque type issue here
+                /*
                 (snapshot_response, 3) => {
                     let snapshot: HTTPSnapShotDepthResponseByBit = snapshot_response.json().await?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     let snapshot_depths = snapshot.depths(3);
                     Ok(snapshot_depths)
                 }
+                */
                 _ => {
                     error!(
                         "failed to create snapshot due to exchange_name {}",
