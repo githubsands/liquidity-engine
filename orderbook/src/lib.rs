@@ -94,6 +94,9 @@ impl OrderBook {
         match depth_update.k {
             0 => {
                 if let Some(asks) = self.asks.get_mut(&OrderedFloat(depth_update.p)) {
+                    if depth_update.p < self.best_deal_asks_level {
+                        self.best_deal_asks_level = depth_update.p
+                    }
                     if let Some(entry) = asks.deque.iter_mut().find(|e| e.l == depth_update.l) {
                         entry.q = depth_update.q;
                         asks.deque.sort_by(|a, b| a.q.partial_cmp(&b.q).unwrap());
@@ -103,6 +106,9 @@ impl OrderBook {
             }
             1 => {
                 if let Some(bids) = self.bids.get_mut(&OrderedFloat(depth_update.p)) {
+                    if depth_update.p > self.best_deal_bids_level {
+                        self.best_deal_asks_level = depth_update.p
+                    }
                     if let Some(entry) = bids.deque.iter_mut().find(|e| e.l == depth_update.l) {
                         entry.q = depth_update.q;
                         bids.deque.sort_by(|a, b| a.q.partial_cmp(&b.q).unwrap());
@@ -183,7 +189,7 @@ impl OrderBook {
 }
 
 pub struct Quote {
-    spread: f64,
-    asks: ThinVec<DepthUpdate>,
-    bids: ThinVec<DepthUpdate>,
+    pub spread: f64,
+    pub asks: ThinVec<DepthUpdate>,
+    pub bids: ThinVec<DepthUpdate>,
 }
