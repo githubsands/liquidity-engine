@@ -200,6 +200,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixed-vec-deque"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1ed20dca398154f12a72106dfef4ec6478b322345c8988abb6a0ae0a48ebfa5"
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -650,6 +656,7 @@ dependencies = [
  "bounded-vec-deque",
  "config",
  "crossbeam-channel",
+ "fixed-vec-deque",
  "futures",
  "market-object",
  "ordered-float",
@@ -658,6 +665,7 @@ dependencies = [
  "rustc-hash",
  "thin-vec",
  "thin_str",
+ "thincollections",
  "tokio",
  "tracing",
  "typed-arena",
@@ -1008,6 +1016,12 @@ name = "thin_str"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be9d479371ac7a8e00f077b47e26db313447fa59ca276ad73c4716975f3895d4"
+
+[[package]]
+name = "thincollections"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fbbc709263615edd99a59621a9a039cd07e666b1df7a8b0e785eae5f518da25"
 
 [[package]]
 name = "thiserror"
