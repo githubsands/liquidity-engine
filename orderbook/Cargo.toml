@@ -21,3 +21,5 @@ config =  { path = "../config"}
 thin-vec = "0.2.12"
 tokio = "1.28.1"
 thin_str = "0.1.0"
+fixed-vec-deque = "0.1.11"
+thincollections = "0.5.4"
