@@ -40,6 +40,7 @@ struct OrderBook {
     quote_producer: TokioSender<Quote>,
     best_ten_asks_cache: ThinVec<DepthUpdate>,
     best_ten_bids_cache: ThinVec<DepthUpdate>,
+    quote: bool,
     level_diff: f64,
 }
 
@@ -73,6 +74,7 @@ impl OrderBook {
             best_ten_asks_cache: ThinVec::with_capacity(10),
             best_ten_bids_cache: ThinVec::with_capacity(10),
             quote_producer: quote_producer,
+            quote: false,
             level_diff: config.level_diff,
         };
         (orderbook, depth_producers)
@@ -118,6 +120,16 @@ impl OrderBook {
             }
             _ => Err(ErrorHotPath::OrderBook),
         }
+    }
+    fn run_quote(&mut self) {
+        if self.quote {
+            self.traverse_asks();
+            self.traverse_bids();
+            self.quote();
+        } else {
+            return
+        }
+    }
     }
     fn traverse_asks(&mut self) {
         let count: u8 = 0;
