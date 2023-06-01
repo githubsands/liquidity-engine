@@ -5,7 +5,8 @@ use std::iter;
 
 extern crate rand;
 
-struct DepthMessageGenerator {
+#[derive(Clone)]
+pub struct DepthMessageGenerator {
     volume: f64,
     price: f64,
     vol_std: f64,
@@ -31,7 +32,7 @@ impl DepthMessageGenerator {
             price_std,
         }
     }
-    fn depth_message(&mut self, location: u8) -> DepthUpdate {
+    pub fn depth_message(&mut self, location: u8) -> DepthUpdate {
         let mut kind: u8;
         let msg_type = match rand::random() {
             true => {
@@ -63,6 +64,17 @@ impl DepthMessageGenerator {
     }
     fn round_to_hundreth(n: f64) -> f64 {
         (n * 100.0).round() / 100.0
+    }
+}
+
+impl Default for DepthMessageGenerator {
+    fn default() -> Self {
+        Self {
+            volume: 400.0,
+            price: 27000.0,
+            vol_std: 200.0,
+            price_std: 0.1,
+        }
     }
 }
 
