@@ -1,92 +1,75 @@
+use depth_generator::DepthMessageGenerator;
 use futures::stream::SplitSink;
-use futures_util::{future, SinkExt, StreamExt, TryStreamExt};
-use market_object::DepthUpdate;
-use rand::distributions::{Distribution, Uniform};
-use std::cell::RefCell;
+use futures::SinkExt;
+use futures_util::StreamExt;
+use market_object::{DepthUpdate, WSDepthUpdateBinance};
+use serde::{Deserialize, Serialize};
+use serde_json::to_string;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::rc::Rc;
-use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::time::Duration;
 use tokio_tungstenite::WebSocketStream;
 use tracing::{info, warn};
-use tungstenite::{accept, Message, WebSocket};
+use tungstenite::Message;
 
 pub struct ExchangeServer {
-    name: &str,
+    name: String,
+    port: String,
     address: SocketAddr,
-    websocket: Option<WebSocketStream<TcpStream>>,
-    writer: Option<SplitSink<TcpStream, Message>>,
 }
 
 impl ExchangeServer {
-    pub fn new(name: &str) -> ExchangeServer {
+    pub fn new(name: String) -> ExchangeServer {
         let ip_address = Ipv4Addr::new(127, 0, 0, 1); // Replace with your desired IP address
         let port = 8080; // Replace with your desired port number
         let socket_addr = SocketAddrV4::new(ip_address, port);
         let socket_addr = SocketAddr::V4(socket_addr);
         ExchangeServer {
             name: name,
-            writer: None::<SplitSink<TcpStream, Message>>,
-            websocket: None,
+            port: port.to_string(),
             address: socket_addr,
         }
+    }
+    pub fn ip_address(&self) -> String {
+        return self.address.to_string();
+    }
+    pub fn port(&self) -> String {
+        return self.port.to_string();
     }
     pub async fn run(&mut self) {
         let tcp_listener = TcpListener::bind(&self.address).await;
         let listener = tcp_listener.unwrap();
-        while let Ok((stream, _)) = listener.accept().await {
-            // tokio::spawn(ExchangeServer::accept_connection(stream));
-            tokio::spawn(ExchangeServer::accept_connection(self.name, stream));
+        while let Ok((client_stream, _)) = listener.accept().await {
+            let name = self.name.clone();
+            tokio::spawn(ExchangeServer::accept_connection(name, client_stream));
         }
     }
-    async fn accept_connection(name: &str, stream: TcpStream) {
-        let addr = stream
+    async fn accept_connection(_: String, stream: TcpStream) {
+        let mut depth_generator = DepthMessageGenerator::default();
+        let _ = stream
             .peer_addr()
             .expect("connected streams should have a peer address");
-        info!("Peer address: {}", addr);
-        let mut interval = tokio::time::interval(Duration::from_millis(1000));
-        if let Ok(ws_stream) = tokio_tungstenite::accept_async(stream).await {
-            let (mut write, mut read) = ws_stream.split();
+        if let Ok(ws_io) = tokio_tungstenite::accept_async(stream).await {
+            let (mut ws_sink, _) = ws_io.split();
             loop {
-                tokio::select! {
-                        msg = read.next() => {
-                            match name {
-                                "1" => {
-                                    write.send(Message::Text("".to_string())).await;
-                                }
-                                "2" => {
-                                    write.send(Message::Text("".to_string())).await;
-                                }
-                                "3" => {
-                                    write.send(Message::Text("".to_string())).await;
-                                    }
-                            }
+                depth_generator.depth_message(1);
+                let mut obj = WSDepthUpdateBinance::default();
+                obj.a = vec![];
+                obj.b = vec![];
+                let text = to_string(&obj);
+                if text.is_ok() {
+                    info!("sending depth message");
+                    let send_result = ws_sink.send(Message::Text(text.unwrap())).await;
+                    match send_result {
+                        Ok(_) => continue,
+                        Err(e) => {
+                            warn!("failed to send object {}", e)
+                        }
                     }
+                } else {
+                    warn!("failed to serialize json object")
                 }
             }
         }
-    }
-    async fn make_market(
-        name: &str,
-        depth: f64,
-        orderbook_diff: f64,,
-    ) -> impl Iterator<Item = DepthUpdate> {
-        let range = Uniform::new(-1.0f64, 1.0);
-        let mut rng = rand::thread_rng();
-
-        let total = 1_000_000;
-        let mut in_circle = 0;
-
-        for _ in 0..total {
-            let bid = range.sample(&mut rng);
-            let ask = range.sample(&mut rng);
-            if a * a + b * b <= 1.0 {
-                in_circle += 1;
-            }
-        }
-
-        let mut depths: Vec<DepthUpdate>;
-        return depths.into_iter();
     }
 }
