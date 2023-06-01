@@ -54,6 +54,8 @@ impl ExchangeServer {
                     info!("client received");
                     break 'client_wait;
                 }
+                _ = self.depth_sink.as_mut().unwrap().send(Message::Text(obj_text.unwrap())).await
+            }
             }
         }
     }

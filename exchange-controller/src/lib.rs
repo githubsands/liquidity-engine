@@ -1,18 +1,14 @@
-use config::ExchangeConfig;
-use exchange_ws::{ExchangeWS, WSStreamState};
-
-use tracing::{debug, error, info, warn};
-
-use market_objects::DepthUpdate
-use quoter_errors::{ErrorHotPath, ErrorInitialState};
-
 use crossbeam_channel::Sender;
 
-use futures::future::{try_join_all, IntoFuture};
-use futures::{Future, StreamExt};
+use futures::future::try_join_all;
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use market_object::DepthUpdate;
+use quoter_errors::ErrorInitialState;
+
+use tracing::{error, info};
+
+use config::ExchangeConfig;
+use exchange_stream::ExchangeStream;
 
 pub struct ExchangeController {
     exchanges: Vec<Box<ExchangeWS>>,
@@ -63,7 +59,6 @@ impl ExchangeController {
                 try_join_all(exchange_websocket_initial_boot_tasks).await;
             let _ = exchange_websockets_results.unwrap();
         }
-
         {
             let mut orderbook_snapshot_tasks: Vec<_> = Vec::new();
 
@@ -87,8 +82,8 @@ impl ExchangeController {
                 try_join_all(orderbook_snapshot_tasks).await;
             let _ = snap_shot_results.unwrap();
         }
-        let ws_stream_result = self.handle_orders().await;
-        let _ = ws_stream_results.unwrap();
+
+        Ok(())
     }
     pub fn pop_exchange(&mut self) -> Option<Box<ExchangeWS>> {
         return self.exchanges.pop();
