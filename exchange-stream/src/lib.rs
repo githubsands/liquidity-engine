@@ -335,7 +335,7 @@ mod tests {
                 buffer: Vec::new(),
                 ws_connection_orderbook: None,
                 ws_connection_orderbook_reader: None,
-                depths_producer: None, // You need to replace `Sender::new()` with the correct way to initialize it
+                depths_producer: None,
                 http_client: None,
             }
         }
