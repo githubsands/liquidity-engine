@@ -2,7 +2,7 @@ use depth_generator::DepthMessageGenerator;
 use futures::stream::SplitSink;
 use futures::SinkExt;
 use futures_util::StreamExt;
-use market_object::{DepthUpdate, WSDepthUpdateBinance};
+use market_object::{BinanceDepthUpdate, DepthUpdate, WSDepthUpdateBinance};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -52,10 +52,10 @@ impl ExchangeServer {
         if let Ok(ws_io) = tokio_tungstenite::accept_async(stream).await {
             let (mut ws_sink, _) = ws_io.split();
             loop {
-                depth_generator.depth_message(1);
+                let (asks, bids) = depth_generator.generate_depth_bulk(1, 8);
                 let mut obj = WSDepthUpdateBinance::default();
-                obj.a = vec![];
-                obj.b = vec![];
+                obj.a = ExchangeServer::convert_to_binance(asks);
+                obj.b = ExchangeServer::convert_to_binance(bids);
                 let text = to_string(&obj);
                 if text.is_ok() {
                     info!("sending depth message");
@@ -71,5 +71,14 @@ impl ExchangeServer {
                 }
             }
         }
+    }
+    fn convert_to_binance(depth_update: Vec<DepthUpdate>) -> Vec<BinanceDepthUpdate> {
+        depth_update
+            .into_iter()
+            .map(|du| BinanceDepthUpdate {
+                price: du.p,
+                quantity: du.q,
+            })
+            .collect()
     }
 }
