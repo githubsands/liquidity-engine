@@ -343,21 +343,20 @@ mod tests {
 
     #[test]
     fn test_exchange_stream_receive_depth() {
-        let waker = futures::task::noop_waker_ref();
-        let mut cx = std::task::Context::from_waker(&waker);
+        // let waker = futures::task::noop_waker_ref();
+        // let mut cx = std::task::Context::from_waker(&waker);
         let mut exchange_server = ExchangeServer::default();
         tokio::sleep(Duration::from_millis(10));
-        let (depth_producer, depth_consumer) = channel::bounded::<DepthUpdate>(20);
+        let (depth_producer, depth_consumer) = channel::bounded::<DepthUpdate>(5);
         let exchange_stream = ExchangeStream::default();
+        exchange_stream.websocket_uri = exchange_server.
         exchange_stream.depths_producer = depths_producer
         let depth_receive = async {
             while let Some(depth_update) = rx.recv().await {
                 println!("received depth")
-
             }
         }
         tokio::sleep(Duration::from_millis(10));
-
         tokio::select! {
             _ = depth_receive {
 
