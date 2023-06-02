@@ -129,7 +129,7 @@ impl DepthMessageGenerator {
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
-        for i in 0..exchange_num {
+        for i in 1..exchange_num {
             for j in mid_price..mid_price + depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
@@ -139,7 +139,7 @@ impl DepthMessageGenerator {
                 asks.push(depth_update);
             }
         }
-        for i in 0..exchange_num {
+        for i in 1..exchange_num {
             for j in mid_price..mid_price - 2 * depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
