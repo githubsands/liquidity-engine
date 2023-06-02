@@ -13,11 +13,6 @@ pub struct DepthMessageGenerator {
     price_std: f64,
 }
 
-enum MessageType {
-    Bid,
-    Ask,
-}
-
 impl DepthMessageGenerator {
     fn new(
         initial_volume: f64,
@@ -33,8 +28,8 @@ impl DepthMessageGenerator {
         }
     }
     pub fn depth_message_random(&mut self, location: u8) -> DepthUpdate {
-        let mut kind: u8;
-        let msg_type = match rand::random() {
+        let kind: u8;
+        let _ = match rand::random() {
             true => {
                 kind = 0;
             }
@@ -46,8 +41,8 @@ impl DepthMessageGenerator {
         let volume_diff = normal.sample(&mut rand::thread_rng()) * self.vol_std;
         let price_diff = normal.sample(&mut rand::thread_rng()) * self.price_std;
         let volume = (self.volume + volume_diff).max(0.0);
-        let mut price: f64;
-        let msg_type = match rand::random() {
+        let price: f64;
+        let _ = match rand::random() {
             true => {
                 price = self.price - price_diff;
             }
@@ -80,11 +75,7 @@ impl DepthMessageGenerator {
             l: location,
         }
     }
-    pub fn generate_depth_bulk(
-        &mut self,
-        location: u8,
-        size: u8,
-    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+    pub fn depth_bulk(&mut self, location: u8, size: u8) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let asks = vec![0; size as usize];
         let bids = vec![0; size as usize];
         let asks: Vec<DepthUpdate> = asks
@@ -97,9 +88,98 @@ impl DepthMessageGenerator {
             .collect();
         (asks, bids)
     }
-
     fn round_to_hundreth(n: f64) -> f64 {
         (n * 100.0).round() / 100.0
+    }
+    pub fn depth_balanced_orderbook(
+        depth: usize,
+        step_greater: u64,
+        exchange_num: usize,
+        mid_price: usize,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut asks: Vec<DepthUpdate> = vec![];
+        let mut bids: Vec<DepthUpdate> = vec![];
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price + depth {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 0;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                asks.push(depth_update);
+            }
+        }
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price - depth {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 1;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                bids.push(depth_update);
+            }
+        }
+        (asks, bids)
+    }
+    pub fn depth_imbalanced_orderbook_ask(
+        depth: usize,
+        step_greater: u64,
+        exchange_num: usize,
+        mid_price: usize,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut asks: Vec<DepthUpdate> = vec![];
+        let mut bids: Vec<DepthUpdate> = vec![];
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price + depth {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 0;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                asks.push(depth_update);
+            }
+        }
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price - 2 * depth {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 1;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                bids.push(depth_update);
+            }
+        }
+        (asks, bids)
+    }
+    pub fn depth_imbalanced_orderbook_bid(
+        depth: usize,
+        step_greater: u64,
+        exchange_num: usize,
+        mid_price: usize,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut asks: Vec<DepthUpdate> = vec![];
+        let mut bids: Vec<DepthUpdate> = vec![];
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price + depth * 2 {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 0;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                asks.push(depth_update);
+            }
+        }
+        for i in 0..exchange_num {
+            for j in mid_price..mid_price - 2 * depth {
+                let mut depth_update = DepthUpdate::default();
+                depth_update.k = 1;
+                depth_update.p = j as f64;
+                depth_update.q = 1 as f64;
+                depth_update.l = i as u8;
+                bids.push(depth_update);
+            }
+        }
+        (asks, bids)
     }
 }
 
