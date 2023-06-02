@@ -19,6 +19,17 @@ pub struct DepthUpdate {
     pub l: u8,
 }
 
+impl Default for DepthUpdate {
+    fn default() -> Self {
+        DepthUpdate {
+            k: 0,
+            p: 0.0,
+            q: 0.0,
+            l: 0,
+        }
+    }
+}
+
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub struct WSOrderBookUpdateBinance {
