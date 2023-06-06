@@ -285,24 +285,29 @@ impl Stream for ExchangeStream {
                 match channel_error {
                     // NOTE: If we see warnings here we may need to increase the size of our main
                     // buffer, or the size of the channel. This should not happen.
-                    TrySendError::Full(_) => {
-                        warn!("failed to try_send to order bid producer, trying again");
+                    TrySendError::Full(error) => {
+                        warn!(
+                            "failed to try_send to order bid producer, trying again {:?}",
+                            error
+                        );
                         return Poll::Ready(Some(WSStreamState::SenderError));
                     }
-                    TrySendError::Disconnected(_) => {
-                        error!("depth producer within ExchangeStream disconnected while streaming");
+                    TrySendError::Disconnected(error) => {
+                        error!("depth producer within ExchangeStream disconnected while streaming {:?}", error);
                         return Poll::Ready(Some(WSStreamState::SenderError));
                     }
                 }
+            } else {
+                info!("orderbook buffer success")
             }
         }
         // check for websocket errors before proceeding
+        // todo trigger a reconnect if this is received
         let Some(mut orderbooks) = this.ws_connection_orderbook_reader.as_mut().as_pin_mut() else {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream))
         };
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
-            debug!("AHHHHHHHHHHHHHHHHHHHHHHHHHHH");
             match stream_option {
                 Some(Ok(ws_message)) => match (&*this.exchange_name, ws_message) {
                     (1, ws_message) => {
@@ -343,7 +348,6 @@ impl Stream for ExchangeStream {
                 }
             }
         }
-        thread::sleep(Duration::from_secs(2));
         Poll::Ready(Some(WSStreamState::WaitingForDepth))
     }
 }
@@ -392,7 +396,7 @@ mod tests {
     #[traced_test]
     async fn test_exchange_stream_receive_depths_from_ws_server() {
         let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
-        let desired_depths: i32 = 1;
+        let desired_depths: i32 = 6500;
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         let exchange_server = Arc::new(Mutex::new(
             ExchangeServer::new("1".to_string(), 8080).unwrap(),
@@ -403,54 +407,47 @@ mod tests {
         let depth_count_clone = depth_count_client_received.clone();
         sleep(Duration::from_secs(2)).await;
         thread::spawn(move || loop {
-            threadSleep(Duration::from_secs(2));
-            println!("4 waiting from orderbook thread");
-            let result = depth_consumer.try_recv();
-            if result.is_err() {
-                info!("result : {:?}", result);
-                continue;
+            if let Ok(depth_update) = depth_consumer.try_recv() {
+                let mut count = depth_count_clone.lock().unwrap();
+                *count = *count + 1;
+                info!("depth count is: {}", *count);
             }
         });
-        let (tx1, rx1) = oneshot::channel();
-        let t1 = tokio::spawn(async move {
-            info!("spawning runtime");
+        let _ = tokio::spawn(async move {
             let server_clone = Arc::clone(&exchange_server);
-            info!("starting server");
             tokio::spawn(async move {
                 server_clone.lock().await.run().await;
             });
             sleep(Duration::from_secs(2)).await;
-            exchange_stream.start().await?;
             let server_clone = Arc::clone(&exchange_server);
             tokio::spawn(async move {
                 'send_loop: loop {
-                    println!("sending depth");
+                    sleep(Duration::from_nanos(1)).await;
                     let result = server_clone.lock().await.supply_depths().await;
                     match result {
-                        Ok(_) => {
-                            info!("send success");
+                        Ok(result) => {
+                            debug!("send success {:?}", result);
                         }
-                        Err(_) => {
-                            info!("send sucess");
+                        Err(e) => {
+                            debug!("send error {:?}", e);
                             continue 'send_loop;
                         }
                     }
-                    exchange_stream.next().await;
-                    // Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
                 }
             });
-            /*
-            tokio::select! {
-                 val = rx1 => {
-                    println!("rx1 completed first with {:?}", val);
-                    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-                }
-            }
-            */
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
         });
-        sleep(Duration::from_secs(4000)).await;
-        println!("ending corotuine");
-        tx1.send(true);
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(2)).await;
+            exchange_stream.start().await;
+            tokio::spawn(async move {
+                loop {
+                    sleep(Duration::from_nanos(1)).await;
+                    exchange_stream.next().await;
+                }
+            });
+        });
+        sleep(Duration::from_secs(10)).await;
+        let count = depth_count_client_received.lock().unwrap();
+        assert!(*count >= desired_depths)
     }
 }
