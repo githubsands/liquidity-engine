@@ -1,5 +1,6 @@
-use std::convert::Infallible;
 use std::error::Error;
+use std::fmt;
+use std::thread;
 use std::{pin::Pin, task::Poll};
 
 use serde_json::{from_str, to_string as jsonify};
@@ -15,10 +16,10 @@ use tokio_tungstenite::{
     tungstenite::protocol::WebSocketConfig, MaybeTlsStream, WebSocketStream,
 };
 
-use bounded_vec_deque::BoundedVecDeque;
 use crossbeam_channel::{Sender, TrySendError};
 use futures::stream::iter;
-use reqwest::{Client, Error as HTTPError};
+use reqwest::Client;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use config::ExchangeConfig;
@@ -36,6 +37,7 @@ pin_project! {
         pub snapshot_enabled: bool,
         pub snapshot_buffer: Vec<DepthUpdate>,
         pub snapshot_uri: String,
+        pub ws_subscribe: bool,
         pub websocket_uri: String,
         pub watched_pair: String,
         pub trigger_snapshot: bool,
@@ -59,7 +61,7 @@ impl ExchangeStream {
     pub fn new(
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<DepthUpdate>,
-        http_client_option: bool,
+        _http_client_option: bool,
     ) -> Result<Box<Self>, ErrorInitialState> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
@@ -73,6 +75,7 @@ impl ExchangeStream {
             snapshot_buffer: Vec::with_capacity(15000),
             snapshot_enabled: exchange_config.snapshot_enabled,
             snapshot_uri: exchange_config.snapshot_uri.clone(),
+            ws_subscribe: false,
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
             orderbook_subscription_message: jsonify(
@@ -95,11 +98,13 @@ impl ExchangeStream {
             accept_unmasked_frames: true,
         };
         let ws_conn_result =
-            connect_async_with_config(self.websocket_uri.clone(), Some(config)).await;
+            connect_async_with_config(self.websocket_uri.clone(), Some(config), false).await;
         let _ = match ws_conn_result {
             Ok((ws_conn, _)) => {
                 let (sink, stream) = ws_conn.split();
-                self.subscribe_orderbooks(sink).await?;
+                if self.ws_subscribe {
+                    self.subscribe_orderbooks(sink).await?;
+                }
                 self.ws_connection_orderbook_reader = Some(stream);
                 info!(
                     "connected to exchange {} at {}",
@@ -196,10 +201,12 @@ impl ExchangeStream {
             ],
             "id": 1
         });
+        /*
         let json_obj_bybit = serde_json::json!({
               "op": "subscribe",
               "args": ["orderbook.1.USDTBTC"]
         });
+        */
 
         let exchange_response = sink.send(Message::Text(json_obj_binance.to_string())).await;
         // TODO: handle this differently;
@@ -213,6 +220,7 @@ impl ExchangeStream {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     async fn reconnect(&mut self) -> Result<(), ErrorHotPath> {
         let config = WebSocketConfig {
             max_send_queue: None,
@@ -221,7 +229,7 @@ impl ExchangeStream {
             accept_unmasked_frames: true,
         };
         let ws_conn_result =
-            connect_async_with_config(self.websocket_uri.clone(), Some(config)).await;
+            connect_async_with_config(self.websocket_uri.clone(), Some(config), false).await;
         let _ = match ws_conn_result {
             Ok((ws_conn, _)) => {
                 self.ws_connection_orderbook = Some(ws_conn);
@@ -243,6 +251,20 @@ pub enum WSStreamState {
     FailedStream,
     FailedDeserialize, // TODO: Pass down the deserialize error like we do with the WSError
     Success,
+    WaitingForDepth,
+}
+
+impl fmt::Debug for WSStreamState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WSStreamState::WSError(err) => write!(f, "WebSocket Error: {:?}", err),
+            WSStreamState::SenderError => write!(f, "Sender Error"),
+            WSStreamState::FailedStream => write!(f, "Failed Stream"),
+            WSStreamState::FailedDeserialize => write!(f, "Failed Deserialize"),
+            WSStreamState::Success => write!(f, "Success"),
+            WSStreamState::WaitingForDepth => write!(f, "Waiting for Depth"),
+        }
+    }
 }
 
 impl Stream for ExchangeStream {
@@ -253,15 +275,19 @@ impl Stream for ExchangeStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         let mut this = self.project();
-        debug!("waiting for items for exchange: {}\n", this.exchange_name);
-        while let Some(depth) = this.buffer.pop() {
+        debug!(
+            "waiting for items to buffer in the exchange: {}\n",
+            this.exchange_name
+        );
+        if let Some(depth) = this.buffer.pop() {
+            debug!("trying to send buffered item",);
             if let Err(channel_error) = this.depths_producer.try_send(depth) {
                 match channel_error {
                     // NOTE: If we see warnings here we may need to increase the size of our main
                     // buffer, or the size of the channel. This should not happen.
                     TrySendError::Full(_) => {
                         warn!("failed to try_send to order bid producer, trying again");
-                        continue;
+                        return Poll::Ready(Some(WSStreamState::SenderError));
                     }
                     TrySendError::Disconnected(_) => {
                         error!("depth producer within ExchangeStream disconnected while streaming");
@@ -270,11 +296,13 @@ impl Stream for ExchangeStream {
                 }
             }
         }
+        // check for websocket errors before proceeding
         let Some(mut orderbooks) = this.ws_connection_orderbook_reader.as_mut().as_pin_mut() else {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream))
         };
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
+            debug!("AHHHHHHHHHHHHHHHHHHHHHHHHHHH");
             match stream_option {
                 Some(Ok(ws_message)) => match (&*this.exchange_name, ws_message) {
                     (1, ws_message) => {
@@ -304,66 +332,125 @@ impl Stream for ExchangeStream {
                             warn!("failed to deserialize the object.");
                         }
                     }
-                    _ => {}
+                    _ => break,
                 },
-                Some(Err(ws_error)) => return Poll::Ready(Some(WSStreamState::WSError(ws_error))),
-                _ => {}
+                Some(Err(ws_error)) => {
+                    warn!("poor depth received: {}", ws_error);
+                    return Poll::Ready(Some(WSStreamState::WSError(ws_error)));
+                }
+                _ => {
+                    return Poll::Ready(Some(WSStreamState::WaitingForDepth));
+                }
             }
         }
-        Poll::Pending
+        thread::sleep(Duration::from_secs(2));
+        Poll::Ready(Some(WSStreamState::WaitingForDepth))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossbeam_channel::{bounded, Receiver};
     use exchange_stubs::ExchangeServer;
-    use tokio_test::{assert_pending, assert_ready_eq};
+    use std::sync::Arc;
+    use std::sync::Mutex as syncMutex;
+    use std::thread;
+    use std::thread::sleep as threadSleep;
+    use testing_traits::ProducerDefault;
+    use tokio::sync::oneshot::channel;
+    use tokio::sync::Mutex;
+    use tokio::time::{sleep, Duration};
+    use tracing::info;
+    use tracing_test::traced_test;
 
-    impl Default for ExchangeStream {
-        fn default() -> Self {
-            Self {
+    impl<'a> ProducerDefault<'a, ExchangeStream, DepthUpdate> for ExchangeStream {
+        fn producer_default() -> (Box<Self>, Receiver<DepthUpdate>) {
+            let (depths_producer, depths_consumer) = bounded::<DepthUpdate>(100);
+            let exchange_stream = Self {
+                depths_producer: depths_producer,
                 client_name: String::from(""),
                 exchange_name: 1,
                 snapshot_enabled: false,
                 snapshot_buffer: Vec::new(),
                 snapshot_uri: String::from(""),
-                websocket_uri: String::from("BTCUSDT")
+                ws_subscribe: false,
+                websocket_uri: String::from(""),
                 watched_pair: String::from(""),
                 trigger_snapshot: false,
                 orderbook_subscription_message: String::from(""),
                 buffer: Vec::new(),
                 ws_connection_orderbook: None,
                 ws_connection_orderbook_reader: None,
-                depths_producer: None,
                 http_client: None,
-            }
+            };
+            (Box::new(exchange_stream), depths_consumer)
         }
     }
 
-    #[test]
-    fn test_exchange_stream_receive_depth() {
-        // let waker = futures::task::noop_waker_ref();
-        // let mut cx = std::task::Context::from_waker(&waker);
-        let mut exchange_server = ExchangeServer::default();
-        tokio::sleep(Duration::from_millis(10));
-        let (depth_producer, depth_consumer) = channel::bounded::<DepthUpdate>(5);
-        let exchange_stream = ExchangeStream::default();
-        exchange_stream.websocket_uri = exchange_server.
-        exchange_stream.depths_producer = depths_producer
-        let depth_receive = async {
-            while let Some(depth_update) = rx.recv().await {
-                println!("received depth")
+    #[tokio::test]
+    #[traced_test]
+    async fn test_exchange_stream_receive_depths_from_ws_server() {
+        let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
+        let desired_depths: i32 = 1;
+        let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
+        let exchange_server = Arc::new(Mutex::new(
+            ExchangeServer::new("1".to_string(), 8080).unwrap(),
+        ));
+        exchange_stream.websocket_uri =
+            "ws://".to_owned() + exchange_server.lock().await.ip_address().as_str();
+        info!("starting test");
+        let depth_count_clone = depth_count_client_received.clone();
+        sleep(Duration::from_secs(2)).await;
+        thread::spawn(move || loop {
+            threadSleep(Duration::from_secs(2));
+            println!("4 waiting from orderbook thread");
+            let result = depth_consumer.try_recv();
+            if result.is_err() {
+                info!("result : {:?}", result);
+                continue;
             }
-        }
-        tokio::sleep(Duration::from_millis(10));
-        tokio::select! {
-            _ = depth_receive {
-
-
-
+        });
+        let (tx1, rx1) = oneshot::channel();
+        let t1 = tokio::spawn(async move {
+            info!("spawning runtime");
+            let server_clone = Arc::clone(&exchange_server);
+            info!("starting server");
+            tokio::spawn(async move {
+                server_clone.lock().await.run().await;
+            });
+            sleep(Duration::from_secs(2)).await;
+            exchange_stream.start().await?;
+            let server_clone = Arc::clone(&exchange_server);
+            tokio::spawn(async move {
+                'send_loop: loop {
+                    println!("sending depth");
+                    let result = server_clone.lock().await.supply_depths().await;
+                    match result {
+                        Ok(_) => {
+                            info!("send success");
+                        }
+                        Err(_) => {
+                            info!("send sucess");
+                            continue 'send_loop;
+                        }
+                    }
+                    exchange_stream.next().await;
+                    // Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+                }
+            });
+            /*
+            tokio::select! {
+                 val = rx1 => {
+                    println!("rx1 completed first with {:?}", val);
+                    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+                }
             }
-        }
-
+            */
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+        sleep(Duration::from_secs(4000)).await;
+        println!("ending corotuine");
+        tx1.send(true);
     }
 }
