@@ -3,6 +3,7 @@ use serde_this_or_that::as_f64;
 use std::convert::Infallible;
 use std::default::Default;
 use std::fmt::{Display, Error as ErrorFMT, Formatter};
+use std::iter::FromIterator;
 
 use tokio_tungstenite::tungstenite::protocol::Message;
 
