@@ -3,6 +3,7 @@ use serde_this_or_that::as_f64;
 use std::convert::Infallible;
 use std::default::Default;
 use std::fmt::{Display, Error as ErrorFMT, Formatter};
+use std::iter::FromIterator;
 
 use tokio_tungstenite::tungstenite::protocol::Message;
 
@@ -11,7 +12,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 // k: 0 ask, 1 bid
 // p: price or level
 // q: quantity
-// l: location: 0 binance, 1 binance_usa, 2 bybit
+// l: location: 1 binance, 2 binance_usa, 3 bybit
 pub struct DepthUpdate {
     pub k: u8,
     pub p: f64,
@@ -148,7 +149,6 @@ impl From<Message> for WSDepthUpdateBinance {
         }
     }
 }
-
 impl WSDepthUpdateBinance {
     pub fn depths(
         self,
@@ -163,7 +163,6 @@ impl WSDepthUpdateBinance {
             q: update.quantity, // and a `quantity` field
             l: location,
         });
-
         let ask_updates = self.a.into_iter().map(move |update| DepthUpdate {
             k: 1,
             p: update.price,
@@ -210,10 +209,110 @@ impl HTTPSnapShotDepthResponseBinance {
     }
 }
 
-pub fn test(ws_message: Message) -> Result<WSDepthUpdateBinance, Infallible> {
-    let actual: Result<WSDepthUpdateBinance, Infallible> =
-        WSDepthUpdateBinance::try_from(ws_message);
-    return actual;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WSOrderBookUpdateByBit {
+    #[serde(deserialize_with = "as_f64")]
+    pub price: f64,
+    #[serde(deserialize_with = "as_f64")]
+    pub quantity: f64,
+}
+
+impl WSDepthUpdateByBit {
+    pub fn depths(
+        self,
+        location: u8,
+    ) -> (
+        impl Iterator<Item = DepthUpdate>,
+        impl Iterator<Item = DepthUpdate>,
+    ) {
+        let bid_updates = self.data.b.into_iter().map(move |update| DepthUpdate {
+            k: 0,
+            p: update.price,    // Assuming BinanceDepthUpdate has a `price` field
+            q: update.quantity, // and a `quantity` field
+            l: location,
+        });
+
+        let ask_updates = self.data.a.into_iter().map(move |update| DepthUpdate {
+            k: 1,
+            p: update.price,
+            q: update.quantity,
+            l: location,
+        });
+
+        (bid_updates, ask_updates)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WSDepthUpdateByBit {
+    pub topic: String,
+    pub type_: String,
+    pub ts: u64,
+    pub data: Data,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Data {
+    pub s: String,
+    pub b: Vec<WSOrderBookUpdateByBit>,
+    pub a: Vec<WSOrderBookUpdateByBit>,
+    pub u: u32,
+    pub seq: u32,
+}
+
+impl From<Message> for WSDepthUpdateByBit {
+    fn from(value: Message) -> Self {
+        match value {
+            Message::Text(text) => {
+                serde_json::from_str(&text).expect("Failed to parse the message")
+            }
+            _ => panic!("Expected Text WebSocket Message"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ByBitData {
+    pub s: String,
+    pub t: u64,
+    pub a: Vec<WSOrderBookUpdateByBit>,
+    pub b: Vec<WSOrderBookUpdateByBit>,
+}
+
+impl HTTPSnapShotDepthResponseByBit {
+    pub fn depths(
+        self,
+        location: u8,
+    ) -> (
+        impl Iterator<Item = DepthUpdate>,
+        impl Iterator<Item = DepthUpdate>,
+    ) {
+        let bid_updates = self.data.b.into_iter().map(move |update| DepthUpdate {
+            k: 0,
+            p: update.price,
+            q: update.quantity,
+            l: location,
+        });
+
+        let ask_updates = self.data.a.into_iter().map(move |update| DepthUpdate {
+            k: 1,
+            p: update.price,
+            q: update.quantity,
+            l: location,
+        });
+
+        (bid_updates, ask_updates)
+    }
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HTTPSnapShotDepthResponseByBit {
+    pub retMsg: Option<String>,
+    pub topic: String,
+    pub ts: u64,
+    pub r#type: String,
+    pub data: ByBitData,
 }
 
 #[cfg(test)]

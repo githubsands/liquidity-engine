@@ -1,18 +1,14 @@
-use config::ExchangeConfig;
-use exchange_ws::{ExchangeWS, WSStreamState};
-
-use tracing::{debug, error, info, warn};
-
-use order::Order;
-use quoter_errors::ErrorInitialState;
-
 use crossbeam_channel::Sender;
 
-use futures::future::{try_join_all, IntoFuture};
-use futures::{Future, StreamExt};
+use futures::future::try_join_all;
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use market_object::DepthUpdate;
+use quoter_errors::ErrorInitialState;
+
+use tracing::{error, info};
+
+use config::ExchangeConfig;
+use exchange_stream::ExchangeStream;
 
 pub struct ExchangeController {
     exchanges: Vec<Box<ExchangeWS>>,
@@ -21,7 +17,7 @@ pub struct ExchangeController {
 impl ExchangeController {
     pub fn new(
         exchange_configs: &Vec<ExchangeConfig>,
-        orders_producer: Sender<Order>,
+        orders_producer: Sender<DepthUpdate>,
     ) -> Result<Box<ExchangeController>, ErrorInitialState> {
         let mut exchanges: Vec<Box<ExchangeWS>> = Vec::new();
         for exchange_config in exchange_configs {
@@ -63,7 +59,6 @@ impl ExchangeController {
                 try_join_all(exchange_websocket_initial_boot_tasks).await;
             let _ = exchange_websockets_results.unwrap();
         }
-
         {
             let mut orderbook_snapshot_tasks: Vec<_> = Vec::new();
 
@@ -87,41 +82,10 @@ impl ExchangeController {
                 try_join_all(orderbook_snapshot_tasks).await;
             let _ = snap_shot_results.unwrap();
         }
+
         Ok(())
     }
-}
-
-/*
-        loop {
-            info!("handling orders");
-            self.handle_orders().await;
-        }
-    }
-    pub async fn handle_orders(&mut self) {
-        let exchange_1 = async {
-            while let Some(exchange_streaming_state) = self.exchanges[0].next().await {
-                match exchange_streaming_state {
-                    WSStreamState::Success => {
-                        println!("received stream state succcess\n");
-                        continue;
-                    }
-                    WSStreamState::FailedStream => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::SenderError => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::FailedDeserialize => {
-                        println!("received stream state fail \n");
-                        continue;
-                    }
-                    WSStreamState::WSError(_) => continue,
-                }
-            }
-        };
-        exchange_1.await
+    pub fn pop_exchange(&mut self) -> Option<Box<ExchangeWS>> {
+        return self.exchanges.pop();
     }
 }
-*/

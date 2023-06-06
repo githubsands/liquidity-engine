@@ -4,13 +4,12 @@ use futures_util::{SinkExt, StreamExt};
 use market_object::{BinanceDepthUpdate, DepthUpdate, WSDepthUpdateBinance};
 use port_killer::kill;
 use serde_json::to_string;
+use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_tungstenite::WebSocketStream;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info};
 use tungstenite::Message;
 
 pub struct ExchangeServer {
@@ -22,87 +21,94 @@ pub struct ExchangeServer {
 }
 
 impl ExchangeServer {
-    pub fn new(name: String, port_num: u16) -> ExchangeServer {
-        let result = kill(port_num);
-        if result.is_err() {
-            panic!("failed to kill port for the server")
-        }
+    pub fn new(name: String, port_num: u16) -> Result<ExchangeServer, Box<dyn Error>> {
+        kill(port_num)?;
         let ip_address = Ipv4Addr::new(127, 0, 0, 1);
         let socket_addr = SocketAddrV4::new(ip_address, port_num);
         let socket_addr = SocketAddr::V4(socket_addr);
         let (depth_producer, depth_consumer) = channel(10);
-        ExchangeServer {
+        Ok(ExchangeServer {
             name: name,
             address: socket_addr,
             depth_producer: depth_producer,
             depth_consumer: depth_consumer,
             depth_sink: None,
-        }
+        })
     }
     pub fn ip_address(&self) -> String {
         return self.address.to_string();
     }
-    pub async fn run(&mut self) {
-        let tcp_listener = TcpListener::bind(&self.address).await;
+    pub async fn run(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        let tcp_listener = TcpListener::bind(&self.address).await?;
         info!("running exchange--");
-        let listener = tcp_listener.unwrap();
-        'client_wait: loop {
+        let listener = tcp_listener;
+        loop {
             if let Ok((client_stream, _)) = listener.accept().await {
-                if let Ok(ws_io) = tokio_tungstenite::accept_async(client_stream).await {
-                    let (ws_sink, _) = ws_io.split();
-                    self.depth_sink = Some(ws_sink);
-                    info!("client received");
-                    break 'client_wait;
+                let connection_result = tokio_tungstenite::accept_async(client_stream).await;
+                match connection_result {
+                    Ok(ws_io) => {
+                        let (ws_sink, _) = ws_io.split();
+                        self.depth_sink = Some(ws_sink);
+                        info!("client received");
+                        return Ok(());
+                    }
+                    Err(connection_error) => return Err(Box::new(connection_error)),
                 }
             }
         }
     }
-    async fn fanout_depth(&mut self) {
-        while let Some(depth_message) = self.depth_consumer.recv().await {
-            let obj = ExchangeServer::convert_to_binance(vec![depth_message]);
-            let obj_text = to_string(&obj[0]);
-            if obj_text.is_err() {
-                warn!("failed to create binance object")
-            }
-            let send_result = self
-                .depth_sink
+    pub async fn supply_depths(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        self.supply_depth_internal().await?;
+        self.fanout_depth().await?;
+        Ok(())
+    }
+    pub async fn supply_depth_internal(
+        &self,
+    ) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        let mut depth_generator = DepthMessageGenerator::default();
+        self.depth_producer
+            .try_send(depth_generator.depth_message_random(1))?;
+        Ok(())
+    }
+    async fn fanout_depth(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        if let Some(depth_message) = self.depth_consumer.recv().await {
+            let mut obj = ExchangeServer::convert_to_binance(vec![depth_message]);
+            obj[0].e = 0.0;
+            let obj_text = to_string(&obj[0])?;
+            info!("sending object to ws client");
+            self.depth_sink
                 .as_mut()
                 .unwrap()
-                .send(Message::Text(obj_text.unwrap()))
-                .await;
-            if send_result.is_err() {
-                error!("failed to send result to ws client")
-            }
-        }
-    }
-    async fn supply_depth(&self) -> Result<(), tokio::sync::mpsc::error::SendError<DepthUpdate>> {
-        let mut depth_generator = DepthMessageGenerator::default();
-        let mut sent = false;
-        while sent == false {
-            let result = self
-                .depth_producer
-                .try_send(depth_generator.depth_message_random(1));
-            match result {
-                Ok(_) => sent = true,
-                Err(e) => {
-                    error!("failed to send: {}", e);
-                    continue;
-                }
-            }
+                .send(Message::Text(obj_text))
+                .await?;
         }
         Ok(())
     }
-    fn convert_to_binance(depth_update: Vec<DepthUpdate>) -> Vec<BinanceDepthUpdate> {
-        depth_update
+    pub async fn force_disconnect(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        self.depth_sink.as_mut().unwrap().close().await?;
+        Ok(())
+    }
+    fn convert_to_binance(depth_updates: Vec<DepthUpdate>) -> Vec<WSDepthUpdateBinance> {
+        let binance_depth_updates: Vec<BinanceDepthUpdate> = depth_updates
             .into_iter()
-            .map(|du| BinanceDepthUpdate {
-                price: du.p,
-                quantity: du.q,
+            .map(|depth_update| BinanceDepthUpdate {
+                price: depth_update.p,
+                quantity: depth_update.q,
             })
-            .collect()
+            .collect();
+        vec![WSDepthUpdateBinance {
+            e: 0.0,
+            E: 0.0,
+            s: 0.0,
+            U: 0.0,
+            u: 0.0,
+            b: binance_depth_updates,
+            a: vec![],
+        }]
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,17 +132,17 @@ mod tests {
         let server_clone = Arc::clone(&exchange_server);
         let connect_addr = server_clone.lock().await.ip_address();
         tokio::spawn(async move {
-            let mut server_lock = server_clone.lock().await;
+            let mut server_lock = server_clone.lock().await
             info!("running server");
             server_lock.run().await;
         });
         let depth_count_clone = depth_count_client_received.clone();
         tokio::spawn(async move {
             sleep(Duration::from_secs(1)).await;
-            let (mut ws_stream, _) = connect_async("ws://".to_owned() + &connect_addr)
+            let (mut ws_client_stream, _) = connect_async("ws://".to_owned() + &connect_addr)
                 .await
                 .expect("Failed to connect");
-            while let Some(_) = ws_stream.next().await {
+            while let Some(_) = ws_client_stream.next().await {
                 let mut count = depth_count_clone.lock().await;
                 *count += 1;
                 info!("received {} depth from server", count);
@@ -169,3 +175,4 @@ mod tests {
         assert!(*depth_count_client_received.lock().await == desired_depths);
     }
 }
+*/

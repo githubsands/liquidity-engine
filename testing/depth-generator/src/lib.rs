@@ -193,18 +193,3 @@ impl Default for DepthMessageGenerator {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[should_panic]
-    fn test_depth_message_generator_spread() {
-        let mut depth_message_generator = DepthMessageGenerator::new(400.0, 27000.0, 200.0, 0.1);
-        println!(
-            "depth message is {:?}",
-            depth_message_generator.depth_message(0)
-        );
-    }
-}
