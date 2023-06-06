@@ -108,7 +108,10 @@ impl ExchangeServer {
     }
 }
 
-/*
+
+// NOTE: This test is invalid due to changes on the exchange stub from commit 9369ceb
+// exchange stub works correctly if tests from 9369ceb succeed
+#[ignore]
 #[cfg(test)]
 mod tests {
     use super::*;
