@@ -8,7 +8,7 @@ pub enum ErrorHotPath {
     QuoterGRPCError(String),
     QuoteServerSinkError(String),
     ReceivedNonTextMessageFromExchange,
-    OrderBook,
+    OrderBook(String),
 }
 
 impl fmt::Display for ErrorHotPath {
@@ -24,9 +24,7 @@ impl fmt::Display for ErrorHotPath {
             ErrorHotPath::ReceivedNonTextMessageFromExchange => {
                 write!(f, "ReceivedNonTextMessage")
             }
-            ErrorHotPath::OrderBook => {
-                write!(f, "OrderBookError")
-            }
+            ErrorHotPath::OrderBook(s) => write!(f, "Orderbook error: {}", s),
         }
     }
 }

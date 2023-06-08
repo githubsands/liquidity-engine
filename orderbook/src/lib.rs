@@ -16,21 +16,31 @@ use std::thread;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
+// TODO: This should be a pragma so we can initialize these fixed sized
+// arrays at precompile time
 struct Level<DepthUpdate> {
-    deque: ThinVec<DepthUpdate>,
+    deque: [DepthUpdate; 2],
 }
 
 impl Level<DepthUpdate> {
-    fn new(exchanges: u8) -> Self {
+    fn new(direction: u8, price_level: f64) -> Self {
         Level {
-            deque: ThinVec::with_capacity(exchanges as usize),
+            deque: [
+                DepthUpdate {
+                    k: direction,
+                    p: price_level,
+                    q: 0.0,
+                    l: 1,
+                },
+                DepthUpdate {
+                    k: direction,
+                    p: price_level,
+                    q: 0.0,
+                    l: 2,
+                },
+            ],
         }
     }
-}
-
-struct DepthEntry {
-    pub volume: f64,
-    pub location: u8,
 }
 
 struct OrderBook {
@@ -39,11 +49,10 @@ struct OrderBook {
     ring_buffer: RingBuffer,
     best_deal_bids_level: f64,
     best_deal_asks_level: f64,
+    building_book: bool,
     asks: FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
     bids: FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
     quote_producer: Option<TokioSender<Quote>>,
-    best_ten_asks_cache: ThinVec<DepthUpdate>,
-    best_ten_bids_cache: ThinVec<DepthUpdate>,
     level_diff: f64,
 }
 
@@ -60,7 +69,6 @@ impl OrderBook {
             config.level_diff,
             config.mid_price as f64,
             config.depth as f64,
-            config.exchange_count as u8,
         );
         let (ring_buffer, depth_producers) = RingBuffer::new(config.ring_buffer);
         let orderbook: OrderBook = OrderBook {
@@ -69,10 +77,9 @@ impl OrderBook {
             exchange_count: config.exchange_count as f64,
             best_deal_bids_level: config.mid_price as f64,
             best_deal_asks_level: config.mid_price as f64,
+            building_book: true,
             asks: asks,
             bids: bids,
-            best_ten_asks_cache: ThinVec::with_capacity(10),
-            best_ten_bids_cache: ThinVec::with_capacity(10),
             quote_producer: Some(quote_producer),
             level_diff: config.level_diff,
         };
@@ -82,75 +89,42 @@ impl OrderBook {
         level_diff: f64,
         mid_level: f64,
         depth: f64,
-        exchange_count: u8,
     ) -> (
         FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
         FxHashMap<OrderedFloat<f64>, Level<DepthUpdate>>,
     ) {
         let mut asks = FxHashMap::<OrderedFloat<f64>, Level<DepthUpdate>>::default();
         let mut current_level = mid_level;
-        for i in (0..=depth as u64 * 2) {
+        for _ in 0..=depth as u64 * 2 {
             current_level = current_level + level_diff;
             info!("asks: {}", round_to_hundreth(current_level));
-            let mut level = Level::new(exchange_count);
-            for i2 in 1..=exchange_count {
-                level.deque.push(DepthUpdate {
-                    k: 1,
-                    p: current_level,
-                    q: 0.0,
-                    l: i2,
-                })
-            }
+            let level = Level::new(0, current_level);
             asks.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
         current_level = mid_level;
-        for i in (0..=depth as u64 * 2) {
+        for i in 0..=depth as u64 * 2 {
             if i > 0 {
                 current_level = current_level - level_diff;
             }
             info!("asks: {}", round_to_hundreth(current_level));
-            let mut level = Level::new(exchange_count);
-            for i2 in 1..=exchange_count {
-                level.deque.push(DepthUpdate {
-                    k: 1,
-                    p: current_level,
-                    q: 0.0,
-                    l: i2,
-                })
-            }
+            let level = Level::new(0, current_level);
             asks.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
         current_level = mid_level;
         let mut bids = FxHashMap::<OrderedFloat<f64>, Level<DepthUpdate>>::default();
-        for i in (0..=depth as u64 * 2) {
+        for _ in 0..=depth as u64 * 2 {
             current_level = current_level + level_diff;
             info!("bids: {}", round_to_hundreth(current_level));
-            let mut level = Level::new(exchange_count);
-            for i2 in 1..=exchange_count {
-                level.deque.push(DepthUpdate {
-                    k: 1,
-                    p: current_level,
-                    q: 0.0,
-                    l: i2,
-                })
-            }
+            let level = Level::new(1, current_level);
             bids.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
         current_level = mid_level;
-        for i in (0..=depth as u64 * 2) {
+        for i in 0..=depth as u64 * 2 {
             if i > 0 {
                 current_level = current_level - level_diff;
             }
             info!("bids: {}", round_to_hundreth(current_level));
-            let mut level = Level::new(exchange_count);
-            for i2 in 1..=exchange_count {
-                level.deque.push(DepthUpdate {
-                    k: 1,
-                    p: current_level,
-                    q: 0.0,
-                    l: i2,
-                })
-            }
+            let level = Level::new(1, current_level);
             bids.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
 
@@ -189,7 +163,11 @@ impl OrderBook {
                         self.best_deal_asks_level = depth_update.p
                     }
                     if let Some(entry) = asks.deque.iter_mut().find(|e| e.l == depth_update.l) {
-                        entry.q = entry.q + depth_update.q;
+                        let updated_quantity = entry.q + depth_update.q;
+                        if updated_quantity < 0.0 {
+                            return Err(ErrorHotPath::OrderBook("negative quantity".to_string()));
+                        }
+                        entry.q = updated_quantity;
                         asks.deque.sort_by(|a, b| a.q.partial_cmp(&b.q).unwrap());
                     } else {
                         warn!(
@@ -209,6 +187,12 @@ impl OrderBook {
                         self.best_deal_asks_level = depth_update.p
                     }
                     if let Some(entry) = bids.deque.iter_mut().find(|e| e.l == depth_update.l) {
+                        let updated_quantity = entry.q + depth_update.q;
+                        if updated_quantity < 0.0 {
+                            return Err(ErrorHotPath::OrderBook(
+                                "negative quantity - ignoring this depth update".to_string(),
+                            ));
+                        }
                         entry.q = entry.q + depth_update.q;
                         bids.deque.sort_by(|a, b| a.q.partial_cmp(&b.q).unwrap());
                     } else {
@@ -224,164 +208,228 @@ impl OrderBook {
             }
             _ => {
                 warn!("poor depth update direction received: {}", depth_update.k);
-                Err(ErrorHotPath::OrderBook)
+                return Err(ErrorHotPath::OrderBook(
+                    "0 1 ASKS or 1 BIDS given by depth update".to_string(),
+                ));
             }
         }
     }
     #[inline(always)]
-    fn run_quote(&mut self) {
-        // self.traverse_asks();
-        self.traverse_bids();
-        // self.quote();
+    fn run_quote(&mut self) -> Result<Quote, ErrorHotPath> {
+        debug!("traversing asks for the best deals");
+        let ask_deals = self.traverse_asks()?;
+        debug!("traversing bids for the best deals");
+        let bid_deals = self.traverse_bids()?;
+        Ok(Quote {
+            spread: ask_deals[0].p - bid_deals[0].p,
+            ask_deals: ask_deals,
+            bid_deals: bid_deals,
+        })
     }
     #[inline(always)]
-    fn traverse_asks(&mut self) {
-        let count: u8 = 0;
-        let mut entry_count: u8 = 0;
-        let mut level: f64 = self.best_deal_asks_level;
-        while entry_count < 10 {
-            debug!("traversing bids at entry_count {}", entry_count);
-            let deals = &mut self
-                .asks
-                .get_mut(&OrderedFloat(self.best_deal_asks_level))
-                .unwrap()
-                .deque;
-            self.best_ten_asks_cache
-                .iter_mut()
-                .zip(deals)
-                .for_each(|(existing, new)| {
-                    if entry_count == 10 {
-                        return;
-                    }
-                    entry_count += 1;
-                    *existing = *new;
-                });
-            level = level + self.level_diff;
-            if entry_count >= count {
-                break;
-            }
-        }
-        // info!("cache is {:#?}", self.best_deal_asks_level);
-    }
-    #[inline(always)]
-    fn traverse_bids(&mut self) {
-        let deals: [DepthUpdate; 10];
-        let count: u8 = 0;
-        let mut entry_count: u8 = 0;
-        let mut level: f64 = self.best_deal_asks_level;
-        debug!("beginning traverse {}", entry_count);
-        while entry_count < 10 {
-            // while entry count is not yet 10 get each level and build the best bid deals
-            //
-
-            if let Some(deals) = self.asks.get_mut(&OrderedFloat(level)) {
-                debug!("deals {:?}", deals.deque);
-                while let Some(depth_update) = &mut self
-                    .asks
-                    .get_mut(&OrderedFloat(level))
+    fn traverse_bids(&mut self) -> Result<[Deal; 10], ErrorHotPath> {
+        let mut current_bid_deal_counter: usize = 0;
+        let mut deals: [Deal; 10] = [
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+        ];
+        let mut current_level: f64 = self.best_deal_asks_level;
+        'next_level: loop {
+            while current_bid_deal_counter < 10 {
+                let current_level_bids =
+                    self.asks.get_mut(&OrderedFloat(self.best_deal_asks_level));
+                if current_level_bids.is_none() {
+                    warn!(
+                        "level {} does not exist in the ASKS book",
+                        self.best_deal_asks_level
+                    );
+                    return Err(ErrorHotPath::OrderBook(
+                        "level does not exist in orderbook".to_string(),
+                    ));
+                }
+                // get the asks where liquidity exist we do this by filtering out any value that
+                // has a quantity of q = 0
+                let mut liquid_bid_levels = current_level_bids
                     .unwrap()
                     .deque
                     .into_iter()
-                    .filter(|&depth_entry| depth_entry.q != 0.0)
-                    .next()
-                {}
-
-                /*
-                self.best_ten_bids_cache
-                    .iter_mut()
-                    .zip(deals.deque.iter())
-                    .for_each(|(existing, new)| {
-                        if entry_count == 10 {
-                            debug!("entry_count is {}", entry_count);
-                            return;
-                        }
-                        entry_count += 1;
-                        *existing = *new;
-                        info!("traversing bids at deal {}", entry_count)
-                    });
-                */
-            } else {
-                warn!("level {} does not exist", level);
+                    .filter(|&depth_entry| depth_entry.q != 0.0);
+                while let Some(bid) = liquid_bid_levels.next() {
+                    current_bid_deal_counter = current_bid_deal_counter + 1;
+                    deals[current_bid_deal_counter].p = bid.p; // price level
+                    deals[current_bid_deal_counter].l = bid.l; // the exchange id
+                    deals[current_bid_deal_counter].q = bid.q; // quantity/volume/liquidity
+                }
+                // this is the bid side so traverse down the orderbook
+                current_level = current_level - self.level_diff;
+                continue 'next_level;
             }
-            level = level - self.level_diff;
-            if entry_count >= count {
-                info!("breaking count");
-                break;
-            }
+            return Ok(deals);
         }
-        info!("cache is {:#?}", self.best_ten_bids_cache)
     }
-    #[inline(always)]
-    fn quote(&mut self) {
-        loop {
-            if let Err(send_error) = self.quote_producer.as_mut().unwrap().try_send(Quote {
-                spread: self.best_ten_asks_cache[0].p - self.best_ten_bids_cache[0].p,
-                ask_1: self.best_ten_asks_cache[0],
-                ask_2: self.best_ten_asks_cache[1],
-                ask_3: self.best_ten_asks_cache[2],
-                ask_4: self.best_ten_asks_cache[3],
-                ask_5: self.best_ten_asks_cache[4],
-                ask_6: self.best_ten_asks_cache[5],
-                ask_7: self.best_ten_asks_cache[6],
-                ask_8: self.best_ten_asks_cache[7],
-                ask_9: self.best_ten_asks_cache[8],
-                ask_10: self.best_ten_asks_cache[9],
-                bid_1: self.best_ten_bids_cache[0],
-                bid_2: self.best_ten_bids_cache[1],
-                bid_3: self.best_ten_bids_cache[2],
-                bid_4: self.best_ten_bids_cache[3],
-                bid_5: self.best_ten_bids_cache[4],
-                bid_6: self.best_ten_bids_cache[5],
-                bid_7: self.best_ten_bids_cache[6],
-                bid_8: self.best_ten_bids_cache[7],
-                bid_9: self.best_ten_bids_cache[8],
-                bid_10: self.best_ten_bids_cache[9],
-            }) {
-                warn!("failed to send quote: {}", send_error);
-                continue;
-            } else {
-                return;
+    fn traverse_asks(&mut self) -> Result<[Deal; 10], ErrorHotPath> {
+        let mut deals: [Deal; 10] = [
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+            Deal {
+                p: 0.0,
+                q: 0.0,
+                l: 0,
+            },
+        ];
+        let mut current_ask_deal_counter: usize = 0;
+        let mut current_level: f64 = self.best_deal_asks_level;
+        'next_level: loop {
+            while current_ask_deal_counter < 10 {
+                let current_level_asks =
+                    self.asks.get_mut(&OrderedFloat(self.best_deal_asks_level));
+                if current_level_asks.is_none() {
+                    warn!(
+                        "level {} does not exist in the ASKS book",
+                        self.best_deal_asks_level
+                    );
+                    return Err(ErrorHotPath::OrderBook(
+                        "level does not exist in orderbook".to_string(),
+                    ));
+                }
+                // get the asks where liquidity exist we do this by filtering out any value that
+                // has a quantity of q = 0
+                let mut liquid_asks_levels = current_level_asks
+                    .unwrap()
+                    .deque
+                    .into_iter()
+                    .filter(|&depth_entry| depth_entry.q != 0.0);
+                while let Some(bid) = liquid_asks_levels.next() {
+                    current_ask_deal_counter = current_ask_deal_counter + 1;
+                    deals[current_ask_deal_counter].p = bid.p; // price level
+                    deals[current_ask_deal_counter].l = bid.l; // the exchange id
+                    deals[current_ask_deal_counter].q = bid.q; // quantity/volume/liquidity
+                }
+                // this is the ask side so traverse up the orderbook
+                current_level = current_level + self.level_diff;
+                continue 'next_level;
             }
+            return Ok(deals);
         }
     }
 }
 
+#[derive(Debug)]
+pub struct Deal {
+    p: f64,
+    q: f64,
+    l: u8,
+}
+
+#[derive(Debug)]
 pub struct Quote {
     pub spread: f64,
-    pub ask_1: DepthUpdate,
-    pub ask_2: DepthUpdate,
-    pub ask_3: DepthUpdate,
-    pub ask_4: DepthUpdate,
-    pub ask_5: DepthUpdate,
-    pub ask_6: DepthUpdate,
-    pub ask_7: DepthUpdate,
-    pub ask_8: DepthUpdate,
-    pub ask_9: DepthUpdate,
-    pub ask_10: DepthUpdate,
-    pub bid_1: DepthUpdate,
-    pub bid_2: DepthUpdate,
-    pub bid_3: DepthUpdate,
-    pub bid_4: DepthUpdate,
-    pub bid_5: DepthUpdate,
-    pub bid_6: DepthUpdate,
-    pub bid_7: DepthUpdate,
-    pub bid_8: DepthUpdate,
-    pub bid_9: DepthUpdate,
-    pub bid_10: DepthUpdate,
+    pub ask_deals: [Deal; 10],
+    pub bid_deals: [Deal; 10],
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::{ExchangeConfig, RingBufferConfig};
-    use crossbeam_channel::{bounded, Sender};
+    use config::RingBufferConfig;
+    use crossbeam_channel::Sender;
     use depth_generator::DepthMessageGenerator;
-    use env_logger::{Builder, Target};
-    use std::thread::sleep as threadSleep;
+    use std::thread::sleep;
     use std::time::Duration;
     use test_log::test;
     use testing_traits::ConsumerDefault;
-    use tracing::{info, Level as tracingLevel};
+    use tracing::info;
     use tracing_test::traced_test;
 
     impl<'a> ConsumerDefault<'a, OrderBook, DepthUpdate> for OrderBook {
@@ -394,8 +442,7 @@ mod tests {
                 ring_buffer_size: 1000,
                 channel_buffer_size: 30,
             };
-            let (asks, bids) =
-                OrderBook::build_orderbook(level_diff, mid_level, depth, exchange_count);
+            let (asks, bids) = OrderBook::build_orderbook(level_diff, mid_level, depth);
             let (ring_buffer, depth_producer) = RingBuffer::new(RingBufferConfig {
                 ring_buffer_size: 300,
                 channel_buffer_size: 300,
@@ -406,11 +453,10 @@ mod tests {
                 ring_buffer: ring_buffer,
                 best_deal_bids_level: 0.0,
                 best_deal_asks_level: 0.0,
+                building_book: true,
                 asks: asks,
                 bids: bids,
                 quote_producer: None,
-                best_ten_asks_cache: ThinVec::with_capacity(10),
-                best_ten_bids_cache: ThinVec::with_capacity(10),
                 level_diff: 0.010,
             };
             (Box::new(orderbook), depth_producer)
@@ -418,8 +464,7 @@ mod tests {
     }
     #[traced_test]
     #[test]
-    fn test_produce_quote_simple() {
-        info!("test");
+    fn test_build_orderbook() {
         let (mut orderbook, producer) = OrderBook::consumer_default();
         let mut dg = DepthMessageGenerator::default();
         dg.volume = 400.0;
@@ -429,7 +474,6 @@ mod tests {
         thread::spawn(move || loop {
             let depth_update = dg.depth_message_random();
             loop {
-                // NOTE: sleep 1 second so our buffer does not get full and has time to process depths
                 thread::sleep(Duration::from_nanos(3));
                 let send_result = producer.try_send(depth_update);
                 match send_result {
@@ -444,10 +488,22 @@ mod tests {
             }
         });
         thread::spawn(move || loop {
+            thread::sleep(Duration::from_nanos(1));
             orderbook.consume_depths();
+            info!("updating the book");
             orderbook.process_depths();
-            orderbook.run_quote();
+            /*
+            if !orderbook.building_book {
+                let quote = orderbook.run_quote();
+                match quote {
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("received quote error {}", e)
+                    }
+                }
+            }
+            */
         });
-        thread::sleep(Duration::from_secs(1000));
+        thread::sleep(Duration::from_secs(5));
     }
 }
