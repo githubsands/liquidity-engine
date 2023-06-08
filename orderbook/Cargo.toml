@@ -18,8 +18,15 @@ market-object =  { path = "../market-object"}
 quoter-errors =  { path = "../quoter-errors"}
 ring-buffer =  { path = "../ring-buffer"}
 config =  { path = "../config"}
+testing-traits= { path = "../testing/testing-traits" }
+depth-generator = { path = "../testing/depth-generator"}
 thin-vec = "0.2.12"
 tokio = "1.28.1"
 thin_str = "0.1.0"
 fixed-vec-deque = "0.1.11"
 thincollections = "0.5.4"
+test-log = "0.2.11"
+env_logger = "*"
+tracing-test = "0.2.4"
+tracing-subscriber = "0.3.17"
+libmath = "0.2.1"

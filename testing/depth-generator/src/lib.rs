@@ -7,10 +7,10 @@ extern crate rand;
 
 #[derive(Clone)]
 pub struct DepthMessageGenerator {
-    volume: f64,
-    price: f64,
-    vol_std: f64,
-    price_std: f64,
+    pub volume: f64,
+    pub price: f64,
+    pub vol_std: f64,
+    pub price_std: f64,
 }
 
 impl DepthMessageGenerator {
@@ -27,8 +27,9 @@ impl DepthMessageGenerator {
             price_std,
         }
     }
-    pub fn depth_message_random(&mut self, location: u8) -> DepthUpdate {
+    pub fn depth_message_random(&mut self) -> DepthUpdate {
         let kind: u8;
+        let location: u8;
         let _ = match rand::random() {
             true => {
                 kind = 0;
@@ -37,17 +38,29 @@ impl DepthMessageGenerator {
                 kind = 1;
             }
         };
+        let _ = match rand::random() {
+            true => {
+                location = 1;
+            }
+            false => {
+                location = 2;
+            }
+        };
+
         let normal = Normal::new(0.0, 1.0).unwrap();
         let volume_diff = normal.sample(&mut rand::thread_rng()) * self.vol_std;
         let price_diff = normal.sample(&mut rand::thread_rng()) * self.price_std;
         let volume = (self.volume + volume_diff).max(0.0);
         let price: f64;
-        let _ = match rand::random() {
-            true => {
+        match kind {
+            0 => {
                 price = self.price - price_diff;
             }
-            false => {
+            1 => {
                 price = self.price + price_diff;
+            }
+            _ => {
+                panic!()
             }
         };
         DepthUpdate {

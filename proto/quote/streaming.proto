@@ -5,16 +5,35 @@ package lib;
 message QuoterRequest {
 }
 
-message Quote {
-    string location = 1;
-    double price = 2;
-    double quantity = 3;
+message Deal {
+    int32 location = 1;
+    int32 direction = 2,
+    double price = 3;
+    double quantity = 4;
 }
 
 message QuoterResponse {
-    repeated Quote best_ten_bids = 1;
-    repeated Quote best_ten_asks = 2;
-    double spread = 3;
+    Deal bid_1 = 1;
+    Deal bid_2 = 2;
+    Deal bid_3 = 3;
+    Deal bid_4 = 4;
+    Deal bid_5 = 5;
+    Deal bid_6 = 6;
+    Deal bid_7 = 7;
+    Deal bid_8 = 8;
+    Deal bid_9 = 9;
+    Deal bid_10 = 10;
+    Deal ask_1 = 11;
+    Deal ask_2 = 12;
+    Deal ask_3 = 13;
+    Deal ask_4 = 14;
+    Deal ask_5 = 15;
+    Deal ask_6 = 16;
+    Deal ask_7 = 17;
+    Deal ask_8 = 18;
+    Deal ask_9 = 19;
+    Deal ask_10 = 20;
+    double spread = 21;
 }
 
 service Quoter {
