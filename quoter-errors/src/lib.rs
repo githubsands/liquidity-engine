@@ -1,6 +1,7 @@
 use std::fmt;
 use thiserror::Error;
 
+#[derive(Error, Debug)]
 pub enum ErrorHotPath {
     ExchangeWSError(String),
     ExchangeWSReconnectError(String),
