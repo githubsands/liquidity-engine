@@ -1,0 +1,6 @@
+(1) make sure the sort is working
+* sort by lowest ask
+* sort by highest bid
+(2) some type of build
+(3) pinning point for where to quote at
+(4) concurrency
