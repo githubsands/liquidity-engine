@@ -9,7 +9,9 @@ use std::time::Duration;
 use thin_vec::ThinVec;
 
 use config::OrderbookConfig;
-use market_object::DepthUpdate;
+use internal_objects::{Deal, Quote};
+use market_objects::DepthUpdate;
+
 use quoter_errors::ErrorHotPath;
 use ring_buffer::RingBuffer;
 use rust_decimal::prelude::*;

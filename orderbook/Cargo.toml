@@ -14,7 +14,8 @@ futures = "0.3.28"
 ordered-float = "3.7.0"
 bounded-vec-deque = "0.1.1"
 typed-arena = "2.0.2"
-market-object =  { path = "../market-object"}
+market-objects =  { path = "../market-objects"}
+internal-objects =  { path = "../internal-objects"}
 quoter-errors =  { path = "../quoter-errors"}
 ring-buffer =  { path = "../ring-buffer"}
 config =  { path = "../config"}
