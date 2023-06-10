@@ -3,9 +3,9 @@
 pub struct QuoterRequest {}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Quote {
-    #[prost(string, tag = "1")]
-    pub location: ::prost::alloc::string::String,
+pub struct Deal {
+    #[prost(int32, tag = "1")]
+    pub location: i32,
     #[prost(double, tag = "2")]
     pub price: f64,
     #[prost(double, tag = "3")]
@@ -14,12 +14,12 @@ pub struct Quote {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuoterResponse {
-    #[prost(message, repeated, tag = "1")]
-    pub best_ten_bids: ::prost::alloc::vec::Vec<Quote>,
+    #[prost(int32, tag = "1")]
+    pub spread: i32,
     #[prost(message, repeated, tag = "2")]
-    pub best_ten_asks: ::prost::alloc::vec::Vec<Quote>,
-    #[prost(double, tag = "3")]
-    pub spread: f64,
+    pub ask_deals: ::prost::alloc::vec::Vec<Deal>,
+    #[prost(message, repeated, tag = "3")]
+    pub bid_deals: ::prost::alloc::vec::Vec<Deal>,
 }
 /// Generated client implementations.
 pub mod quoter_client {
