@@ -15,6 +15,7 @@ use ring_buffer::RingBuffer;
 use rust_decimal::prelude::*;
 use rust_decimal_macros::dec;
 use std::thread;
+use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 // TODO: This should be a pragma so we can initialize these fixed sized
@@ -49,6 +50,7 @@ struct OrderBook {
     asks: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     bids: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     level_diff: f64,
+    quote_producer: TokioSender<Quote>,
 }
 
 fn round_to_hundreth(num: f64) -> f64 {
@@ -78,6 +80,7 @@ impl OrderBook {
             asks: asks,
             bids: bids,
             level_diff: config.level_diff,
+            quote_producer: quote_producer,
         };
         (orderbook, depth_producers)
     }
@@ -208,16 +211,16 @@ impl OrderBook {
     }
 
     #[inline]
-    fn run_quote(&mut self) -> Result<Quote, ErrorHotPath> {
-        debug!("traversing asks for the best deals");
+    fn run_quote(&mut self) -> Result<(), ErrorHotPath> {
         let ask_deals = self.traverse_asks()?;
-        debug!("traversing bids for the best deals");
         let bid_deals = self.traverse_bids()?;
-        Ok(Quote {
+        let quote = Quote {
             spread: ask_deals[0].p - bid_deals[0].p,
             ask_deals: ask_deals,
             bid_deals: bid_deals,
-        })
+        };
+        self.send_quote(quote)?;
+        Ok(())
     }
     fn traverse_asks(&mut self) -> Result<[Deal; 10], ErrorHotPath> {
         let mut deals: [Deal; 10] = [
@@ -394,16 +397,24 @@ impl OrderBook {
             return Ok(deals);
         }
     }
+    #[inline]
+    fn send_quote(&self, quote: Quote) -> Result<(), ErrorHotPath> {
+        while let Err(e) = self.quote_producer.try_send(quote) {
+            warn!("failed to send quote to grpc server {:?}", quote);
+            continue;
+        }
+        Ok(())
+    }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Deal {
     pub p: f64,
     pub q: f64,
     pub l: u8,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Quote {
     pub spread: f64,
     pub ask_deals: [Deal; 10],
@@ -420,6 +431,7 @@ mod tests {
     use std::time::Duration;
     use test_log::test;
     use testing_traits::ConsumerDefault;
+    use tokio::sync::mpsc::{channel, Sender as TokioSender};
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -433,6 +445,7 @@ mod tests {
                 ring_buffer_size: 300,
                 channel_buffer_size: 300,
             });
+            let (quote_producer, _) = channel(10);
             let orderbook = OrderBook {
                 ring_buffer: ring_buffer,
                 best_deal_bids_level: 0.0,
@@ -440,6 +453,7 @@ mod tests {
                 asks: asks,
                 bids: bids,
                 level_diff: 0.010,
+                quote_producer: quote_producer,
             };
             (Box::new(orderbook), depth_producer)
         }
