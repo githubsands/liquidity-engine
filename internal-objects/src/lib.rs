@@ -1,13 +1,13 @@
-use thin_vec::ThinVec;
-
+#[derive(Copy, Clone, Debug)]
 pub struct Deal {
-    pub volume: f64,
-    pub price: f64,
-    pub location: u8,
+    pub p: f64,
+    pub q: f64,
+    pub l: u8,
 }
 
-pub struct Quotes {
+#[derive(Copy, Clone, Debug)]
+pub struct Quote {
     pub spread: f64,
-    pub best_bids: ThinVec<Deal>,
-    pub best_asks: ThinVec<Deal>,
+    pub ask_deals: [Deal; 10],
+    pub bid_deals: [Deal; 10],
 }
