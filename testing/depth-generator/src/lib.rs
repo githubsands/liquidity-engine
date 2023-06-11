@@ -1,4 +1,4 @@
-use market_object::DepthUpdate;
+use market_objects::DepthUpdate;
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 use std::iter;
