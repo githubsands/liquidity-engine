@@ -21,3 +21,6 @@ incremental = true
 codegen-units = 256
 rpath = false
 
+[workspace]
+members = ["config", "exchange-controller", "exchange-stream", "internal-objects", "market-objects", "orderbook", "proto-source", "quoter-errors", "ring-bufer"]
+exclude = ["quoter-grpc-server"]
