@@ -13,7 +13,7 @@ pub struct DepthMessageGenerator {
 }
 
 impl DepthMessageGenerator {
-    fn new(
+    pub fn new(
         initial_volume: f64,
         initial_price: f64,
         vol_std: f64,
