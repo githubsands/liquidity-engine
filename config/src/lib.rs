@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_yaml;
-use std::fmt;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
