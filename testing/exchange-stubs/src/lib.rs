@@ -1,7 +1,7 @@
 use depth_generator::DepthMessageGenerator;
 use futures::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use market_object::{BinanceDepthUpdate, DepthUpdate, WSDepthUpdateBinance};
+use market_objects::{BinanceDepthUpdate, DepthUpdate, WSDepthUpdateBinance};
 use port_killer::kill;
 use serde_json::to_string;
 use std::error::Error;
