@@ -1,29 +1,37 @@
-use futures::future::join_all;
-use futures::StreamExt;
-use rayon::prelude::*;
-use rayon::{ThreadPool, ThreadPoolBuilder};
+#[allow(unused_imports)]
+pub mod pb {
+    tonic::include_proto!("lib"); // lib (lib.rs) is the name where our generated proto is within
+                                  // the OUR_DIR environemntal variable.  be aware that we must
+                                  // export OUT_DIR with the path of our generated proto stubs
+                                  // before this program can correctly compile
+}
+
+use futures::stream::Stream;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use tokio_stream::StreamExt;
+use tonic::{Request, Response, Status};
+
+use tokio::sync::broadcast::{channel, Sender};
+use tokio::sync::mpsc::channel as mpsc_channel;
+
+use internal_objects::Quote;
+use tokio_stream::wrappers::ReceiverStream;
+
+use pb::{QuoterRequest, QuoterResponse};
+
+use crate::pb::quoter_server::QuoterServer;
+
+use std::{error::Error, net::ToSocketAddrs, path::PathBuf, thread};
+
+use clap::{App, Arg};
+
 use tokio::runtime::{Builder, Runtime};
-use tokio::time::{sleep as async_sleep, Duration as async_duration};
-
-use std::env;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
-
-use awaitgroup::WaitGroup;
-use crossbeam_channel::bounded;
-
-use num_cpus;
-use tracing::{debug, error, info, warn};
-
-use exchange_controller::ExchangeController;
-// use orderbook::OrderBook;
+use tonic::transport::Server;
 
 use config::{read_yaml_config, Config};
-
-use std::error::Error;
-
-use serde::{Deserialize, Serialize};
+use tracing::{error, info};
 use tracing_subscriber;
 
 fn main() {
@@ -41,68 +49,159 @@ fn main() {
     let file = PathBuf::from(config_path);
     let config_file = read_yaml_config(file);
     info!("config loaded succesfully");
+    /*
     let num_cpus = num_cpus::get();
-    let mut async_rt = Builder::new_multi_thread()
+    let mut ws_io_rt = Builder::new_current_thread();
         .enable_io()
         .enable_time()
-        .worker_threads(usize(
-            f64(num_cpus) * config_file.as_ref().unwrap().io_thread_percentage,
-        ))
+        .thread_name("websocket io")
+        .worker_threads(1)
         .build()
         .unwrap();
-    let mut tp = rayon::ThreadPoolBuilder::new()
-        .num_threads(usize(
-            f64(num_cpus) - (f64(num_cpus) * config_file.as_ref().unwrap().io_thread_percentage),
-        ))
-        .build()
-        .unwrap();
-    let res = orderbook_quoter_server(&config_file.unwrap(), &mut async_rt, &mut tp);
+    */
+    let res = orderbook_quoter_server(&config_file.unwrap());
     match res {
         Ok(_) => info!("shutting down orderbook_quoter_server"),
         Err(error) => error!("failed to run orderbook quoter server {}", error),
     }
 }
 
-fn orderbook_quoter_server(
-    config: &Config,
-    async_runtime: &mut Runtime,
-    thread_pool: &mut ThreadPool,
-) -> Result<(), Box<dyn Error>> {
+fn orderbook_quoter_server(config: &Config) -> Result<(), Box<dyn Error>> {
     info!("starting orderbook-quoter-server");
-    let async_handle = async_runtime.handle();
-    // let (orderbook, orders_producer) = OrderBook::new(&config.orderbook);
-    let (orderbook_producer, _) = bounded(4);
-    let mut exchange_controller =
-        ExchangeController::new(&config.exchanges, orderbook_producer).unwrap();
-    info!("created exchange controller");
-    let handle = async_handle.block_on(async move {
-        exchange_controller.boot_exchanges().await;
-        async_sleep(async_duration::from_secs(10)).await;
-
-        let mut exchange_handles = Vec::new();
-        while let Some(mut exchange_stream) = exchange_controller.pop_exchange() {
-            info!("spawning async handler for");
-            let exchange_handler = tokio::spawn(async move {
-                exchange_stream.next().await;
-            });
-            exchange_handles.push(exchange_handler);
-        }
-        let _ = join_all(exchange_handles).await;
+    let core_ids = core_affinity::get_core_ids().unwrap();
+    let io_grpc_core = core_ids[0];
+    thread::spawn(move || {
+        let mut async_grpc_io_rt = Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .thread_name("grpc io")
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let core_id = core_affinity::set_for_current(io_grpc_core);
+        let grpc_io_handler = async_grpc_io_rt.handle();
+        grpc_io_handler.spawn(async {
+            let (server, quote_producer) = OrderBookQuoterServer::new();
+            Server::builder()
+                .add_service(QuoterServer::new(server)) // pb generated QuotedServer consumes our
+                // type OrderBookQuoterServer
+                .serve(":9090".to_socket_addrs().unwrap().next().unwrap())
+                .await
+                .unwrap();
+        });
     });
-
-    info!("quoter server is shutting down");
     Ok(())
 }
 
+type QuoterResult<T> = Result<Response<T>, Status>;
+type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
+
+#[derive(Debug, Clone)]
+pub struct OrderBookQuoterServer {
+    pub quote_producer: Arc<Sender<Quote>>,
+}
+
+impl OrderBookQuoterServer {
+    pub fn new() -> (Self, Sender<Quote>) {
+        let (quote_producer, _quote_consumer) = channel::<Quote>(16);
+        let quote_producer_arc = Arc::new(quote_producer.clone());
+        (
+            OrderBookQuoterServer {
+                quote_producer: quote_producer_arc,
+            },
+            quote_producer,
+        )
+    }
+}
+
+// NOTE:
+//
+// the autogenerated quoter trait containing the server_streaming_quoter implementation
+// implemented at L64
 /*
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = QuoterServer {};
-    Server::builder()
-        .add_service(pb::echo_server::QuoterServer::new(server))
-        .serve("[::1]:50051".to_socket_addrs().unwrap().next().unwrap())
-        .await
-        .unwrap();
-
-    Ok(())
-}
+pub trait Quoter: Send + Sync + 'static {
+        /// Server streaming response type for the ServerStreamingQuoter method.
+        type ServerStreamingQuoterStream: futures_core::Stream<
+                Item = std::result::Result<super::QuoterResponse, tonic::Status>,
+            >
+            + Send
+            + 'static;
+        async fn server_streaming_quoter(
+            &self,
+            request: tonic::Request<super::QuoterRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::ServerStreamingQuoterStream>,
+            tonic::Status,
+        >;
+    }
 */
+
+#[tonic::async_trait]
+impl pb::quoter_server::Quoter for OrderBookQuoterServer {
+    type ServerStreamingQuoterStream = ResponseStream;
+
+    async fn server_streaming_quoter(
+        &self,
+        req: Request<QuoterRequest>,
+    ) -> QuoterResult<Self::ServerStreamingQuoterStream> {
+        println!("\tclient connected from: {:?}", req.remote_addr());
+        let producer = self.quote_producer.clone();
+        let receiver = producer.subscribe();
+        let output_stream = tokio_stream::wrappers::BroadcastStream::new(receiver);
+        let mut quote_grpc_stream =
+            output_stream.map(|upstream_quote_result| match upstream_quote_result {
+                Ok(upstream_quote) => Ok(QuoterResponse {
+                    ask_deals: upstream_quote
+                        .ask_deals
+                        .into_iter()
+                        .map(|preprocessed_deal| pb::Deal {
+                            location: preprocessed_deal.l as i32,
+                            price: preprocessed_deal.p,
+                            quantity: preprocessed_deal.q,
+                        })
+                        .collect(),
+                    bid_deals: upstream_quote
+                        .bid_deals
+                        .into_iter()
+                        .map(|preprocessed_deal| pb::Deal {
+                            location: preprocessed_deal.l as i32,
+                            price: preprocessed_deal.p,
+                            quantity: preprocessed_deal.q,
+                        })
+                        .collect(),
+                    spread: upstream_quote.spread as i32,
+                }),
+                Err(upstream_quote_error) => {
+                    info!("failed");
+                    return Err(upstream_quote_error);
+                }
+            });
+        // 1. receive quote from upstream componenets through quote_grpc_stream
+        // 2. forward quote to the client
+        // 3. receive a quoter response and status back from the client
+        let (client_response_producer, client_response_consumer) = mpsc_channel(1000);
+        tokio::spawn(async move {
+            while let Some(broadcast_receiver_result) = quote_grpc_stream.next().await {
+                match broadcast_receiver_result {
+                    Ok(quote) => {
+                        match client_response_producer
+                            .send(Result::<_, Status>::Ok(quote))
+                            .await
+                        {
+                            Ok(_) => {
+                                info!("sending quote to client");
+                            }
+                            Err(_quote) => break,
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+            println!("\tclient disconnected");
+        });
+        let output_stream = ReceiverStream::new(client_response_consumer);
+        Ok(Response::new(
+            Box::pin(output_stream) as Self::ServerStreamingQuoterStream
+        ))
+    }
+}
