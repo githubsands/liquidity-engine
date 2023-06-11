@@ -9,11 +9,10 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_tungstenite::WebSocketStream;
-use tracing::{debug, error, info};
+use tracing::info;
 use tungstenite::Message;
 
 pub struct ExchangeServer {
-    name: String,
     address: SocketAddr,
     depth_producer: Sender<DepthUpdate>,
     depth_consumer: Receiver<DepthUpdate>,
@@ -21,14 +20,13 @@ pub struct ExchangeServer {
 }
 
 impl ExchangeServer {
-    pub fn new(name: String, port_num: u16) -> Result<ExchangeServer, Box<dyn Error>> {
+    pub fn new(_name: String, port_num: u16) -> Result<ExchangeServer, Box<dyn Error>> {
         kill(port_num)?;
         let ip_address = Ipv4Addr::new(127, 0, 0, 1);
         let socket_addr = SocketAddrV4::new(ip_address, port_num);
         let socket_addr = SocketAddr::V4(socket_addr);
         let (depth_producer, depth_consumer) = channel(10);
         Ok(ExchangeServer {
-            name: name,
             address: socket_addr,
             depth_producer: depth_producer,
             depth_consumer: depth_consumer,
@@ -108,7 +106,6 @@ impl ExchangeServer {
     }
 }
 
-
 // NOTE: This test is invalid due to changes on the exchange stub from commit 9369ceb
 // exchange stub works correctly if tests from 9369ceb succeed
 #[ignore]
@@ -135,7 +132,7 @@ mod tests {
         let server_clone = Arc::clone(&exchange_server);
         let connect_addr = server_clone.lock().await.ip_address();
         tokio::spawn(async move {
-            let mut server_lock = server_clone.lock().await
+            let mut server_lock = server_clone.lock().await;
             info!("running server");
             server_lock.run().await;
         });
@@ -178,4 +175,3 @@ mod tests {
         assert!(*depth_count_client_received.lock().await == desired_depths);
     }
 }
-*/
