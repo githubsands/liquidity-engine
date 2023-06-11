@@ -1,7 +1,6 @@
 use market_objects::DepthUpdate;
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
-use std::iter;
 
 extern crate rand;
 
@@ -38,8 +37,8 @@ impl DepthMessageGenerator {
             }
         };
         let normal = Normal::new(0.0, 1.0).unwrap();
-        let volume_diff = normal.sample(&mut rand::thread_rng()) * self.vol_std;
-        let price_diff = normal.sample(&mut rand::thread_rng()) * self.price_std;
+        let volume_diff = normal.sample(&mut thread_rng()) * self.vol_std;
+        let price_diff = normal.sample(&mut thread_rng()) * self.price_std;
         let volume = (self.volume + volume_diff).max(0.0);
         let price: f64;
         let _ = match rand::random() {
@@ -93,7 +92,6 @@ impl DepthMessageGenerator {
     }
     pub fn depth_balanced_orderbook(
         depth: usize,
-        step_greater: u64,
         exchange_num: usize,
         mid_price: usize,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
@@ -123,7 +121,6 @@ impl DepthMessageGenerator {
     }
     pub fn depth_imbalanced_orderbook_ask(
         depth: usize,
-        step_greater: u64,
         exchange_num: usize,
         mid_price: usize,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
@@ -153,7 +150,6 @@ impl DepthMessageGenerator {
     }
     pub fn depth_imbalanced_orderbook_bid(
         depth: usize,
-        step_greater: u64,
         exchange_num: usize,
         mid_price: usize,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
