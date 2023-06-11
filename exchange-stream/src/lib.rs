@@ -23,7 +23,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use config::ExchangeConfig;
-use market_object::{
+use market_objects::{
     DepthUpdate, HTTPSnapShotDepthResponseBinance, HTTPSnapShotDepthResponseByBit,
     WSDepthUpdateBinance, WSDepthUpdateByBit,
 };
