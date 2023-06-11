@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "exchange-stream",
+    "testing/depth-generator",
+    "testing/exchange-stubs",
+    "internal-objects",
+    "market-objects",
+]

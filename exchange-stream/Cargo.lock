@@ -364,7 +364,7 @@ name = "depth-generator"
 version = "0.1.0"
 dependencies = [
  "distribution",
- "market-object",
+ "market-objects",
  "rand",
  "rand_distr",
 ]
@@ -457,7 +457,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "itertools",
- "market-object",
+ "market-objects",
  "native-tls",
  "oneshot",
  "parking_lot 0.12.1",
@@ -486,7 +486,7 @@ dependencies = [
  "futures 0.3.28",
  "futures-util",
  "log",
- "market-object",
+ "market-objects",
  "port-killer",
  "rand",
  "serde",
@@ -995,14 +995,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "market-object"
+name = "market-objects"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde-this-or-that",
  "serde_json",
  "smallvec 1.10.0",
- "tokio-tungstenite 0.19.0",
+ "tokio-tungstenite 0.18.0",
  "tungstenite 0.19.0",
 ]
 
@@ -2053,7 +2053,9 @@ checksum = "54319c93411147bced34cb5609a80e0a8e44c5999c93903a81cd866630ec0bfd"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "tokio 1.28.1",
+ "tokio-native-tls",
  "tungstenite 0.18.0",
 ]
 
@@ -2231,6 +2233,7 @@ dependencies = [
  "http",
  "httparse",
  "log",
+ "native-tls",
  "rand",
  "sha1",
  "thiserror",
