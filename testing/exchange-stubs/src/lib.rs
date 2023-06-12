@@ -1,7 +1,9 @@
 use depth_generator::DepthMessageGenerator;
 use futures::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use market_objects::{BinanceDepthUpdate, DepthUpdate, WSDepthUpdateBinance};
+use market_objects::{
+    BinanceDepthUpdate, DepthUpdate, HTTPSnapShotDepthResponseBinance, WSDepthUpdateBinance,
+};
 use port_killer::kill;
 use serde_json::to_string;
 use std::error::Error;
@@ -11,6 +13,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_tungstenite::WebSocketStream;
 use tracing::info;
 use tungstenite::Message;
+use warp::Filter;
+
+const EXCHANGE_LOCATIONS: u8 = 2;
 
 pub struct ExchangeServer {
     address: SocketAddr,
@@ -36,7 +41,7 @@ impl ExchangeServer {
     pub fn ip_address(&self) -> String {
         return self.address.to_string();
     }
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+    pub async fn run_websocket(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         let tcp_listener = TcpListener::bind(&self.address).await?;
         info!("running exchange--");
         let listener = tcp_listener;
@@ -55,12 +60,50 @@ impl ExchangeServer {
             }
         }
     }
+    pub async fn run_http_server(self) -> Result<(), Box<dyn Error>> {
+        let http_route = warp::path("http").map(|| {
+            let mut depth_generator = DepthMessageGenerator::default();
+            format!("Hello, World!");
+            let (asks, bids) =
+                depth_generator.depth_balanced_orderbook(EXCHANGE_LOCATIONS as usize, 40, 27000);
+            let binance_asks: Vec<BinanceDepthUpdate> = asks
+                .into_iter()
+                .map(|depth| BinanceDepthUpdate {
+                    price: depth.p,
+                    quantity: depth.q,
+                })
+                .collect();
+            let binance_bids: Vec<BinanceDepthUpdate> = bids
+                .into_iter()
+                .map(|depth| BinanceDepthUpdate {
+                    price: depth.p,
+                    quantity: depth.q,
+                })
+                .collect();
+            let response = HTTPSnapShotDepthResponseBinance {
+                retcode: Some(0),
+                lastUpdateId: 100, // TODO: This value may need to be leveraged to properly test a
+                // sequence orderbook with websocket messges and snapshot updates
+                asks: binance_asks,
+                bids: binance_bids,
+            };
+            warp::reply::json(&response)
+        });
+        warp::serve(http_route).run(self.address).await;
+        Ok(())
+    }
+    pub async fn supply_depth_snapshot(
+        &self,
+        _req: warp::http::Request<warp::hyper::Body>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        Ok("Hello, World!")
+    }
     pub async fn supply_depths(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
-        self.supply_depth_internal().await?;
+        self.supply_depth_internal_ws().await?;
         self.fanout_depth().await?;
         Ok(())
     }
-    pub async fn supply_depth_internal(
+    pub async fn supply_depth_internal_ws(
         &self,
     ) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         let mut depth_generator = DepthMessageGenerator::default();
@@ -107,9 +150,11 @@ impl ExchangeServer {
 }
 
 // NOTE: This test is invalid due to changes on the exchange stub from commit 9369ceb
-// exchange stub works correctly if tests from 9369ceb succeed
-#[ignore]
-#[cfg(test)]
+// exchange stub works correctly if tests from 9369ceb succeed. github actions ci is currently
+// ignoring this "ignore" macro so we have it commented out for now
+// #[ignore]
+// #[cfg(test)]
+/*
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -175,3 +220,4 @@ mod tests {
         assert!(*depth_count_client_received.lock().await == desired_depths);
     }
 }
+*/
