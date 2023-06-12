@@ -7,7 +7,7 @@ use market_objects::{
 use port_killer::kill;
 use serde_json::to_string;
 use std::error::Error;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_tungstenite::WebSocketStream;
@@ -18,31 +18,41 @@ use warp::Filter;
 const EXCHANGE_LOCATIONS: u8 = 2;
 
 pub struct ExchangeServer {
-    address: SocketAddr,
+    ws_address: SocketAddrV4,
+    http_address: SocketAddrV4,
     depth_producer: Sender<DepthUpdate>,
     depth_consumer: Receiver<DepthUpdate>,
     depth_sink: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
 }
 
 impl ExchangeServer {
-    pub fn new(_name: String, port_num: u16) -> Result<ExchangeServer, Box<dyn Error>> {
-        kill(port_num)?;
+    pub fn new(
+        _name: String,
+        ws_port_num: u16,
+        http_port_num: u16,
+    ) -> Result<ExchangeServer, Box<dyn Error>> {
+        kill(ws_port_num)?;
+        kill(http_port_num)?;
         let ip_address = Ipv4Addr::new(127, 0, 0, 1);
-        let socket_addr = SocketAddrV4::new(ip_address, port_num);
-        let socket_addr = SocketAddr::V4(socket_addr);
+        let socket_addr_ws = SocketAddrV4::new(ip_address, ws_port_num);
+        let socket_addr_http = SocketAddrV4::new(ip_address, http_port_num);
         let (depth_producer, depth_consumer) = channel(10);
         Ok(ExchangeServer {
-            address: socket_addr,
+            ws_address: socket_addr_ws,
+            http_address: socket_addr_http,
             depth_producer: depth_producer,
             depth_consumer: depth_consumer,
             depth_sink: None,
         })
     }
-    pub fn ip_address(&self) -> String {
-        return self.address.to_string();
+    pub fn ws_ip_address(&self) -> String {
+        return self.ws_address.to_string();
+    }
+    pub fn http_ip_address(&self) -> String {
+        return self.http_address.to_string();
     }
     pub async fn run_websocket(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
-        let tcp_listener = TcpListener::bind(&self.address).await?;
+        let tcp_listener = TcpListener::bind(&self.ws_address).await?;
         info!("running exchange--");
         let listener = tcp_listener;
         loop {
@@ -89,7 +99,7 @@ impl ExchangeServer {
             };
             warp::reply::json(&response)
         });
-        warp::serve(http_route).run(self.address).await;
+        warp::serve(http_route).run(self.http_address).await;
         Ok(())
     }
     pub async fn supply_depth_snapshot(
@@ -146,6 +156,22 @@ impl ExchangeServer {
             b: binance_depth_updates,
             a: vec![],
         }]
+    }
+}
+
+impl Default for ExchangeServer {
+    fn default() -> Self {
+        let (depth_producer, depth_consumer) = channel::<DepthUpdate>(100);
+        let ip_address = Ipv4Addr::new(127, 0, 0, 1);
+        let ws_port_num = 8080;
+        let http_port_num = 8080;
+        ExchangeServer {
+            ws_address: SocketAddrV4::new(ip_address, ws_port_num),
+            http_address: SocketAddrV4::new(ip_address, http_port_num),
+            depth_producer,
+            depth_consumer,
+            depth_sink: None,
+        }
     }
 }
 

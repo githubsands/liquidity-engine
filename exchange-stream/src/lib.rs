@@ -439,10 +439,10 @@ mod tests {
         let desired_depths: i32 = 6500;
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         let exchange_server = Arc::new(Mutex::new(
-            ExchangeServer::new("1".to_string(), 8080).unwrap(),
+            ExchangeServer::new("1".to_string(), 8080, 8081).unwrap(),
         ));
         exchange_stream.websocket_uri =
-            "ws://".to_owned() + exchange_server.lock().await.ip_address().as_str();
+            "ws://".to_owned() + exchange_server.lock().await.ws_ip_address().as_str();
         info!("starting test");
         let depth_count_clone = depth_count_client_received.clone();
         sleep(Duration::from_secs(2)).await;
@@ -456,7 +456,7 @@ mod tests {
         let _ = tokio::spawn(async move {
             let server_clone = Arc::clone(&exchange_server);
             tokio::spawn(async move {
-                server_clone.lock().await.run().await;
+                server_clone.lock().await.run_websocket().await;
             });
             sleep(Duration::from_secs(2)).await;
             let server_clone = Arc::clone(&exchange_server);
