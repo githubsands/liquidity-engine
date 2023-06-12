@@ -16,6 +16,8 @@ use tokio_tungstenite::{
     tungstenite::protocol::WebSocketConfig, MaybeTlsStream, WebSocketStream,
 };
 
+use tokio::sync::mpsc::{channel as asyncChannel, Receiver, Sender as asyncSender};
+
 use crossbeam_channel::{Sender, TrySendError};
 use futures::stream::iter;
 use reqwest::Client;
@@ -34,7 +36,6 @@ pin_project! {
         pub client_name: String,
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
-        pub sequence_depths: bool,
         pub websocket_depth_buffer: Vec<DepthUpdate>,
         pub snapshot_uri: String,
         pub buffer_websocket_depths: bool,
@@ -42,7 +43,7 @@ pin_project! {
         pub websocket_uri: String,
         pub watched_pair: String,
 
-        pub snapshot_trigger: Option<tokio::sync::oneshot::Receiver<()>>,
+        pub snapshot_trigger: Option<Receiver<()>>,
 
         orderbook_subscription_message: String,
 
@@ -64,19 +65,16 @@ impl ExchangeStream {
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<DepthUpdate>,
         _http_client_option: bool,
-    ) -> Result<(Box<Self>, tokio::sync::oneshot::Sender<()>), ErrorInitialState> {
+    ) -> Result<(Box<Self>, asyncSender<()>), ErrorInitialState> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
             info!("snapshot is enabled building http client");
             http_client = Some(Client::new());
         }
-
-        let (snapshot_trigger_tx, snapshot_trigger_rx) = tokio::sync::oneshot::channel();
-
+        let (snapshot_trigger_tx, snapshot_trigger_rx) = asyncChannel(1);
         let exchange = ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
-            sequence_depths: false,
             snapshot_trigger: Some(snapshot_trigger_rx),
             websocket_depth_buffer: Vec::with_capacity(15000),
             buffer_websocket_depths: false,
@@ -130,7 +128,7 @@ impl ExchangeStream {
             if let Some(trigger) = &mut self.snapshot_trigger {
                 // we may have received a upstream trigger to grab a snapshot
                 tokio::select! {
-                    _ = trigger => {
+                    _ = trigger.recv() => {
                         self.buffer_websocket_depths = true;
                         if let Ok(mut depths) = self.pull_depths().await {
                             while let Some(depth) = depths.next() {
@@ -403,9 +401,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex as syncMutex;
     use std::thread;
-    use std::thread::sleep as threadSleep;
     use testing_traits::ProducerDefault;
-    use tokio::sync::oneshot::channel;
     use tokio::sync::Mutex;
     use tokio::time::{sleep, Duration};
     use tracing::info;
