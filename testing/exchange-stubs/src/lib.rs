@@ -8,12 +8,19 @@ use port_killer::kill;
 use serde_json::to_string;
 use std::error::Error;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::Mutex;
 use tokio_tungstenite::WebSocketStream;
 use tracing::info;
 use tungstenite::Message;
 use warp::Filter;
+
+use std::io::{self, ErrorKind};
+use tokio::sync::oneshot::{
+    channel as oneshotChannel, Receiver as oneshotReceiver, Sender as oneshotSender,
+};
 
 const EXCHANGE_LOCATIONS: u8 = 2;
 
@@ -23,6 +30,7 @@ pub struct ExchangeServer {
     depth_producer: Sender<DepthUpdate>,
     depth_consumer: Receiver<DepthUpdate>,
     depth_sink: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
+    http_shutdown: Receiver<()>,
 }
 
 impl ExchangeServer {
@@ -30,20 +38,25 @@ impl ExchangeServer {
         _name: String,
         ws_port_num: u16,
         http_port_num: u16,
-    ) -> Result<ExchangeServer, Box<dyn Error>> {
+    ) -> Result<(ExchangeServer, Sender<()>), Box<dyn Error>> {
         kill(ws_port_num)?;
         kill(http_port_num)?;
         let ip_address = Ipv4Addr::new(127, 0, 0, 1);
         let socket_addr_ws = SocketAddrV4::new(ip_address, ws_port_num);
         let socket_addr_http = SocketAddrV4::new(ip_address, http_port_num);
         let (depth_producer, depth_consumer) = channel(10);
-        Ok(ExchangeServer {
-            ws_address: socket_addr_ws,
-            http_address: socket_addr_http,
-            depth_producer: depth_producer,
-            depth_consumer: depth_consumer,
-            depth_sink: None,
-        })
+        let (http_shutdown, shut_down_receiver) = channel(1);
+        Ok((
+            ExchangeServer {
+                ws_address: socket_addr_ws,
+                http_address: socket_addr_http,
+                depth_producer: depth_producer,
+                depth_consumer: depth_consumer,
+                depth_sink: None,
+                http_shutdown: shut_down_receiver,
+            },
+            http_shutdown,
+        ))
     }
     pub fn ws_ip_address(&self) -> String {
         return self.ws_address.to_string();
@@ -70,10 +83,9 @@ impl ExchangeServer {
             }
         }
     }
-    pub async fn run_http_server(self) -> Result<(), Box<dyn Error>> {
-        let http_route = warp::path("http").map(|| {
+    pub async fn run_http_server(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        let http_route = warp::path("depths").map(|| {
             let mut depth_generator = DepthMessageGenerator::default();
-            format!("Hello, World!");
             let (asks, bids) =
                 depth_generator.depth_balanced_orderbook(EXCHANGE_LOCATIONS as usize, 40, 27000);
             let binance_asks: Vec<BinanceDepthUpdate> = asks
@@ -92,22 +104,26 @@ impl ExchangeServer {
                 .collect();
             let response = HTTPSnapShotDepthResponseBinance {
                 retcode: Some(0),
-                lastUpdateId: 100, // TODO: This value may need to be leveraged to properly test a
-                // sequence orderbook with websocket messges and snapshot updates
+                lastUpdateId: 100,
                 asks: binance_asks,
                 bids: binance_bids,
             };
             warp::reply::json(&response)
         });
-        warp::serve(http_route).run(self.http_address).await;
-        Ok(())
+        let server = warp::serve(http_route);
+        let shutdown = &mut self.http_shutdown;
+        let (_, server_result) = tokio::select! {
+            _ = server.run(self.http_address) => {
+                ((), Ok(()))
+            }
+            _ = shutdown.recv()=> {
+                ((), Ok(()))
+            }
+        };
+
+        server_result
     }
-    pub async fn supply_depth_snapshot(
-        &self,
-        _req: warp::http::Request<warp::hyper::Body>,
-    ) -> Result<impl warp::Reply, warp::Rejection> {
-        Ok("Hello, World!")
-    }
+
     pub async fn supply_depths(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         self.supply_depth_internal_ws().await?;
         self.fanout_depth().await?;
@@ -124,19 +140,35 @@ impl ExchangeServer {
     async fn fanout_depth(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         if let Some(depth_message) = self.depth_consumer.recv().await {
             let mut obj = ExchangeServer::convert_to_binance(vec![depth_message]);
+            if obj.is_empty() {
+                return Err(Box::new(io::Error::new(
+                    ErrorKind::Other,
+                    "failed to create binance object",
+                )));
+            }
             obj[0].e = 0.0;
             let obj_text = to_string(&obj[0])?;
             info!("sending object to ws client");
-            self.depth_sink
-                .as_mut()
-                .unwrap()
-                .send(Message::Text(obj_text))
-                .await?;
+            if let Some(depth_sink) = &mut self.depth_sink {
+                depth_sink.send(Message::Text(obj_text)).await?;
+            } else {
+                return Err(Box::new(io::Error::new(ErrorKind::Other, "failed to fanout depths due to no websocket client being established within the exchange server")));
+            }
+            Ok(())
+        } else {
+            Err(Box::new(io::Error::new(
+                ErrorKind::Other,
+                "No depth message received",
+            )))
         }
+    }
+    pub async fn force_disconnect_ws(
+        &mut self,
+    ) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
+        self.depth_sink.as_mut().unwrap().close().await?;
         Ok(())
     }
-    pub async fn force_disconnect(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
-        self.depth_sink.as_mut().unwrap().close().await?;
+    pub async fn shutdown_http(&mut self) -> Result<(), Box<dyn Error + Sync + Send + 'static>> {
         Ok(())
     }
     fn convert_to_binance(depth_updates: Vec<DepthUpdate>) -> Vec<WSDepthUpdateBinance> {
@@ -159,21 +191,26 @@ impl ExchangeServer {
     }
 }
 
+/*
 impl Default for ExchangeServer {
     fn default() -> Self {
         let (depth_producer, depth_consumer) = channel::<DepthUpdate>(100);
         let ip_address = Ipv4Addr::new(127, 0, 0, 1);
         let ws_port_num = 8080;
-        let http_port_num = 8080;
+        let http_port_num = 8081;
+        let (shut_down, shut_down_receiver) = oneshotChannel();
         ExchangeServer {
             ws_address: SocketAddrV4::new(ip_address, ws_port_num),
             http_address: SocketAddrV4::new(ip_address, http_port_num),
             depth_producer,
             depth_consumer,
             depth_sink: None,
+            http_shutdown: shut_down_receiver,
+            http_shutdown_trigger: shut_down,
         }
     }
 }
+*/
 
 // NOTE: This test is invalid due to changes on the exchange stub from commit 9369ceb
 // exchange stub works correctly if tests from 9369ceb succeed. github actions ci is currently
