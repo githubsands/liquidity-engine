@@ -195,7 +195,6 @@ impl HTTPSnapShotDepthResponseBinance {
             q: update.quantity,
             l: location,
         });
-
         let ask_updates = self.asks.into_iter().map(move |update| DepthUpdate {
             k: 1,
             p: update.price,

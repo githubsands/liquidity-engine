@@ -1,12 +1,14 @@
 use std::fmt;
 use thiserror::Error;
 
+#[derive(Error, Debug)]
 pub enum ErrorHotPath {
     ExchangeWSError(String),
     ExchangeWSReconnectError(String),
     Serialization(String),
     QuoterGRPCError(String),
     QuoteServerSinkError(String),
+    ExchangeStreamSnapshot(String),
     ReceivedNonTextMessageFromExchange,
     OrderBook,
 }
@@ -26,6 +28,9 @@ impl fmt::Display for ErrorHotPath {
             }
             ErrorHotPath::OrderBook => {
                 write!(f, "OrderBookError")
+            }
+            ErrorHotPath::ExchangeStreamSnapshot(s) => {
+                write!(f, "HTTPSnapshot error: {}", s)
             }
         }
     }

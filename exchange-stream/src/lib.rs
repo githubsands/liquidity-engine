@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::thread;
 use std::{pin::Pin, task::Poll};
 
 use serde_json::{from_str, to_string as jsonify, Value as JsonValue};
@@ -17,6 +16,7 @@ use tokio_tungstenite::{
 };
 
 use tokio::sync::mpsc::{channel as asyncChannel, Receiver, Sender as asyncSender};
+use tokio::time::{sleep, Duration};
 
 use crossbeam_channel::{Sender, TrySendError};
 use futures::stream::iter;
@@ -37,7 +37,7 @@ pin_project! {
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
         pub websocket_depth_buffer: Vec<DepthUpdate>,
-        pub snapshot_uri: String,
+        pub http_snapshot_uri: String,
         pub buffer_websocket_depths: bool,
         pub ws_subscribe: bool,
         pub websocket_uri: String,
@@ -79,7 +79,7 @@ impl ExchangeStream {
             websocket_depth_buffer: Vec::with_capacity(15000),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
-            snapshot_uri: exchange_config.snapshot_uri.clone(),
+            http_snapshot_uri: exchange_config.snapshot_uri.clone() + "/depths",
             ws_subscribe: false,
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
@@ -124,20 +124,27 @@ impl ExchangeStream {
         Ok(())
     }
     pub async fn run(&mut self) {
-        if self.snapshot_enabled {
-            if let Some(trigger) = &mut self.snapshot_trigger {
-                // we may have received a upstream trigger to grab a snapshot
-                tokio::select! {
+        if let Some(trigger) = &mut self.snapshot_trigger {
+            tokio::select! {
                     _ = trigger.recv() => {
                         self.buffer_websocket_depths = true;
-                        if let Ok(mut depths) = self.pull_depths().await {
-                            while let Some(depth) = depths.next() {
-                                // TODO: Will panic if buffer is full catch this and go to process the
-                                // depth with next
-                                self.buffer.push(depth);
-                                self.next().await; // we must keep processing  snapshot depths and depths from the websocket
-                                                   // but this time the websocket depths are stored in their own buffer
-                                                   // to be sequenced
+                        let mut success = false;
+                        while !success {
+                            sleep(Duration::from_secs(2)).await;
+                            let pull_result = self.pull_depths().await;
+                            match pull_result {
+                                Ok(mut depths) => {
+                                while let Some(depth) = depths.next() {
+                                    self.buffer.push(depth);
+                                    self.next().await; // we must keep processing  snapshot depths and depths from the websocket
+                                                       // but this time the websocket depths are stored in their own buffer
+                                                       // to be sequenced
+                                }
+                                success = true;
+                                }
+                                Err(pull_error) => {
+                                    warn!("failed to get websocket depths from exchange {}", pull_error)
+                                }
                             }
                         }
                         // we are done push snapshot depths to the orderbook - turn this buffer off
@@ -148,16 +155,19 @@ impl ExchangeStream {
                             self.next().await;
                         }
                     }
+                _ = tokio::time::sleep(Duration::from_nanos(1)) => {
+                    _ = self.next().await
+
                 }
             }
+        } else {
+            self.next().await;
         }
-        // continue websocket streaming business as usual. this is the dominant state of the
-        // program when no snapshot is being triggered
-        self.next().await;
     }
+    // TODO: Do not dynamically allocate errors in pull_depth
     async fn pull_depths(
         &mut self,
-    ) -> Result<impl Iterator<Item = DepthUpdate>, Box<dyn std::error::Error>> {
+    ) -> Result<impl Iterator<Item = DepthUpdate>, Box<dyn Error + Sync + Send + 'static>> {
         let snapshot_depths = self.orderbook_snapshot().await?;
         let interleaved_depths = interleave(snapshot_depths.0, snapshot_depths.1);
         Ok(interleaved_depths)
@@ -175,18 +185,25 @@ impl ExchangeStream {
             impl Iterator<Item = DepthUpdate>,
             impl Iterator<Item = DepthUpdate>,
         ),
-        Box<dyn std::error::Error>,
+        Box<dyn Error + Sync + Send + 'static>,
     > {
-        info!("curling snap shot from {}", self.snapshot_uri);
+        info!("curling snap shot from {}", self.http_snapshot_uri);
         let req_builder = self
             .http_client
             .as_ref()
             .unwrap()
-            .get(self.snapshot_uri.clone());
+            .get(self.http_snapshot_uri.clone());
         let snapshot_response_result = req_builder.send().await;
+        debug!("sending request: {:?}", snapshot_response_result);
         match snapshot_response_result {
             Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
                 (snapshot_response, 1) => {
+                    if snapshot_response.status() != 200 {
+                        return Err(Box::new(ErrorHotPath::ExchangeStreamSnapshot(
+                            "failed to get snapshot through http. received error code: {}"
+                                .to_string(),
+                        )));
+                    }
                     let body = snapshot_response.text().await?;
                     let snapshot: HTTPSnapShotDepthResponseBinance = from_str(&body)?;
                     info!("finished receiving snaps for {}", self.exchange_name);
@@ -311,6 +328,7 @@ impl Stream for ExchangeStream {
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
+        info!("streaming -- here");
         let mut this = self.project();
         if let Some(depth) = this.buffer.pop() {
             if let Err(channel_error) = this.depths_producer.try_send(depth) {
@@ -336,6 +354,7 @@ impl Stream for ExchangeStream {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream))
         };
+        info!("streaming -- here 2");
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
             match stream_option {
                 Some(Ok(ws_message)) => match (&*this.exchange_name, ws_message) {
@@ -347,6 +366,7 @@ impl Stream for ExchangeStream {
                                 this.websocket_depth_buffer.extend(woven_depths);
                                 continue;
                             }
+                            debug!("receiving stream 2");
                             this.buffer.extend(woven_depths);
                         } else {
                             warn!("failed to deserialize the object.");
@@ -389,6 +409,7 @@ impl Stream for ExchangeStream {
                 }
             }
         }
+        info!("streaming -- here 1");
         return Poll::Ready(Some(WSStreamState::WaitingForDepth));
     }
 }
@@ -416,7 +437,7 @@ mod tests {
                 exchange_name: 1,
                 snapshot_enabled: false,
                 websocket_depth_buffer: Vec::new(),
-                snapshot_uri: String::from(""),
+                http_snapshot_uri: String::from(""),
                 ws_subscribe: false,
                 websocket_uri: String::from(""),
                 watched_pair: String::from(""),
@@ -426,7 +447,7 @@ mod tests {
                 buffer: Vec::new(),
                 ws_connection_orderbook: None,
                 ws_connection_orderbook_reader: None,
-                http_client: None,
+                http_client: Some(Client::new()),
             };
             (Box::new(exchange_stream), depths_consumer)
         }
@@ -434,32 +455,32 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_exchange_stream_receive_depths_from_ws_server() {
+    async fn test_receive_depths_from_ws_server() {
+        let test_length_seconds = 10;
         let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
         let desired_depths: i32 = 6500;
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
-        let exchange_server = Arc::new(Mutex::new(
-            ExchangeServer::new("1".to_string(), 8080, 8081).unwrap(),
-        ));
+        let (exchange_server, _) = ExchangeServer::new("1".to_string(), 8080, 9500).unwrap();
+        let exchange_server = Arc::new(Mutex::new(exchange_server));
         exchange_stream.websocket_uri =
             "ws://".to_owned() + exchange_server.lock().await.ws_ip_address().as_str();
-        info!("starting test");
-        let depth_count_clone = depth_count_client_received.clone();
+        exchange_stream.buffer_websocket_depths = false;
+        let depth_count = depth_count_client_received.clone();
         sleep(Duration::from_secs(2)).await;
         thread::spawn(move || loop {
-            if let Ok(depth_update) = depth_consumer.try_recv() {
-                let mut count = depth_count_clone.lock().unwrap();
+            if let Ok(_) = depth_consumer.try_recv() {
+                let mut count = depth_count.lock().unwrap();
                 *count = *count + 1;
                 info!("depth count is: {}", *count);
             }
         });
         let _ = tokio::spawn(async move {
-            let server_clone = Arc::clone(&exchange_server);
+            let server_clone = exchange_server.clone();
             tokio::spawn(async move {
-                server_clone.lock().await.run_websocket().await;
+                let _ = server_clone.lock().await.run_websocket().await;
             });
             sleep(Duration::from_secs(2)).await;
-            let server_clone = Arc::clone(&exchange_server);
+            let server_clone = exchange_server.clone();
             tokio::spawn(async move {
                 'send_loop: loop {
                     sleep(Duration::from_nanos(1)).await;
@@ -478,7 +499,7 @@ mod tests {
         });
         tokio::spawn(async move {
             sleep(Duration::from_secs(2)).await;
-            exchange_stream.start().await;
+            _ = exchange_stream.start().await;
             tokio::spawn(async move {
                 loop {
                     sleep(Duration::from_nanos(1)).await;
@@ -486,8 +507,157 @@ mod tests {
                 }
             });
         });
-        sleep(Duration::from_secs(10)).await;
+        sleep(Duration::from_secs(test_length_seconds)).await;
+        let count = depth_count_client_received.lock().unwrap();
+        assert!(*count >= desired_depths)
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_trigger_snapshots() {
+        let test_length_seconds = 10;
+        let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
+        let desired_depths: i32 = 15;
+        let (trigger_producer, trigger_consumer) = asyncChannel::<()>(1);
+        let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
+        exchange_stream.snapshot_enabled = true;
+        exchange_stream.snapshot_trigger = Some(trigger_consumer);
+        let (exchange_server, http_shutdown) =
+            ExchangeServer::new("1".to_string(), 8081, 9501).unwrap();
+        let exchange_server = Arc::new(Mutex::new(exchange_server));
+        exchange_stream.websocket_uri =
+            "ws://".to_owned() + exchange_server.lock().await.ws_ip_address().as_str();
+        exchange_stream.http_snapshot_uri = "http://".to_owned()
+            + exchange_server.lock().await.http_ip_address().as_str()
+            + "/depths";
+        debug!("http: {:?}", exchange_stream.http_snapshot_uri);
+        debug!("ws: {:?}", exchange_stream.websocket_uri);
+        let depth_count_clone = depth_count_client_received.clone();
+        thread::spawn(move || loop {
+            if let Ok(_) = depth_consumer.try_recv() {
+                let mut count = depth_count_clone.lock().unwrap();
+                *count = *count + 1;
+                info!("received")
+            }
+        });
+        sleep(Duration::from_secs(1)).await;
+        let _ = tokio::spawn(async move {
+            let server_clone = exchange_server.clone();
+            tokio::spawn(async move {
+                let _ = server_clone.lock().await.run_websocket().await;
+            });
+            let server_clone = exchange_server.clone();
+            tokio::spawn(async move {
+                let _ = server_clone.lock().await.run_http_server().await;
+            });
+        });
+        debug!("booting up exchange stream");
+        sleep(Duration::from_secs(3)).await;
+        tokio::spawn(async move {
+            let result = exchange_stream.start().await;
+            if result.is_err() {
+                debug!("failed to start stream")
+            }
+            loop {
+                sleep(Duration::from_secs(1)).await;
+                debug!("RUNNING exchange_stream");
+                exchange_stream.run().await;
+            }
+        });
+        sleep(Duration::from_secs(7)).await;
+        debug!("triggering snapshot");
+        let result = trigger_producer.send(()).await;
+        if result.is_err() {
+            debug!("received error {:?}", result);
+        }
+        sleep(Duration::from_secs(test_length_seconds)).await;
+        let count = depth_count_client_received.lock().unwrap();
+        assert!(*count >= desired_depths);
+        let _ = http_shutdown.send(());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_trigger_with_ws_depths() {
+        let test_length_seconds = 20;
+        let ws_depths: i32 = 10;
+        let desired_depths: i32 = 80 + ws_depths; // NOTE currently our depth snapshot has 80 total depth
+                                                  // updates we want to account for that plus some ws stream
+                                                  // depths
+        let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
+        let (exchange_server, http_shutdown) =
+            ExchangeServer::new("1".to_string(), 8082, 9502).unwrap();
+        let exchange_server = Arc::new(Mutex::new(exchange_server));
+        let (trigger_producer, trigger_consumer) = asyncChannel::<()>(1);
+        let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
+        exchange_stream.snapshot_enabled = true;
+        exchange_stream.snapshot_trigger = Some(trigger_consumer);
+        exchange_stream.websocket_uri =
+            "ws://".to_owned() + exchange_server.lock().await.ws_ip_address().as_str();
+        exchange_stream.http_snapshot_uri = "http://".to_owned()
+            + exchange_server.lock().await.http_ip_address().as_str()
+            + "/depths";
+        exchange_stream.buffer_websocket_depths = false;
+        debug!("http: {:?}", exchange_stream.http_snapshot_uri);
+        debug!("ws: {:?}", exchange_stream.websocket_uri);
+        let depth_count_clone = depth_count_client_received.clone();
+        thread::spawn(move || loop {
+            if let Ok(_) = depth_consumer.try_recv() {
+                let mut count = depth_count_clone.lock().unwrap();
+                *count = *count + 1;
+                info!("depth count is: {}", *count);
+            }
+        });
+        let _ = tokio::spawn(async move {
+            let server_clone = exchange_server.clone();
+            tokio::spawn(async move {
+                let _ = server_clone.lock().await.run_websocket().await;
+            });
+            let server_clone = exchange_server.clone();
+            tokio::spawn(async move {
+                let mut server = server_clone.lock().await;
+                let _ = server.run_http_server().await;
+                info!("shutting down the http server");
+            });
+            let server_clone = exchange_server.clone();
+            let mut depths_sent_through_websocket_count: i32 = 0;
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(15)).await;
+                // shutdown the server so we can release the
+                // exchange server lock to start sending ws
+                // depths
+                _ = http_shutdown.send(()).await;
+                loop {
+                    if ws_depths == depths_sent_through_websocket_count {
+                        return;
+                    }
+                    sleep(Duration::from_nanos(1)).await;
+                    let _ = server_clone.lock().await.supply_depths().await;
+                    depths_sent_through_websocket_count += 1;
+                }
+            });
+        });
+        sleep(Duration::from_secs(5)).await;
+        tokio::spawn(async move {
+            let _ = exchange_stream.start().await;
+            loop {
+                info!("streaming");
+                sleep(Duration::from_nanos(1)).await;
+                exchange_stream.run().await;
+            }
+        });
+        sleep(Duration::from_secs(5)).await;
+        let result = trigger_producer.send(()).await;
+        if result.is_err() {
+            debug!("received error {:?}", result);
+        }
+
+        sleep(Duration::from_secs(test_length_seconds)).await;
         let count = depth_count_client_received.lock().unwrap();
         assert!(*count >= desired_depths)
     }
 }
+
+// test stream with trigger select
+// test stream triggered snapsho
+//test stream sequenced depths
