@@ -1,15 +1,15 @@
 use market_objects::DepthUpdate;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use rand_distr::{Distribution, Normal};
 
 extern crate rand;
 
 #[derive(Clone)]
 pub struct DepthMessageGenerator {
-    volume: f64,
-    price: f64,
-    vol_std: f64,
-    price_std: f64,
+    pub volume: f64,
+    pub price: f64,
+    pub vol_std: f64,
+    pub price_std: f64,
 }
 
 impl DepthMessageGenerator {
@@ -74,16 +74,22 @@ impl DepthMessageGenerator {
             l: location,
         }
     }
-    pub fn depth_bulk(&mut self, location: u8, size: u8) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
-        let asks = vec![0; size as usize];
-        let bids = vec![0; size as usize];
+    pub fn depth_bulk(
+        &mut self,
+        exchange_locations: u8,
+        depth_size_one_sided: u8,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut rng = rand::thread_rng();
+
+        let asks = vec![0; depth_size_one_sided as usize];
+        let bids = vec![0; depth_size_one_sided as usize];
         let asks: Vec<DepthUpdate> = asks
             .iter()
-            .map(|_| self.depth_message(location, true))
+            .map(|_| self.depth_message(rng.gen_range(1..=exchange_locations), true))
             .collect();
         let bids: Vec<DepthUpdate> = bids
             .iter()
-            .map(|_| self.depth_message(location, false))
+            .map(|_| self.depth_message(rng.gen_range(1..=exchange_locations), false))
             .collect();
         (asks, bids)
     }
@@ -91,13 +97,14 @@ impl DepthMessageGenerator {
         (n * 100.0).round() / 100.0
     }
     pub fn depth_balanced_orderbook(
+        &mut self,
         depth: usize,
-        exchange_num: usize,
+        exchange_locations: usize,
         mid_price: usize,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
-        for i in 0..exchange_num {
+        for i in 0..exchange_locations {
             for j in mid_price..mid_price + depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
@@ -107,7 +114,7 @@ impl DepthMessageGenerator {
                 asks.push(depth_update);
             }
         }
-        for i in 0..exchange_num {
+        for i in 0..exchange_locations {
             for j in mid_price..mid_price - depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
