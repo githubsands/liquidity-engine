@@ -10,6 +10,7 @@ pub struct DepthMessageGenerator {
     pub price: f64,
     pub vol_std: f64,
     pub price_std: f64,
+    pub level_diff: f64,
 }
 
 impl DepthMessageGenerator {
@@ -18,12 +19,14 @@ impl DepthMessageGenerator {
         initial_price: f64,
         vol_std: f64,
         price_std: f64,
+        level_diff: f64,
     ) -> DepthMessageGenerator {
         DepthMessageGenerator {
             volume: initial_volume,
             price: initial_price,
             vol_std,
             price_std,
+            level_diff,
         }
     }
     pub fn depth_message_random(&mut self, location: u8) -> DepthUpdate {
@@ -96,6 +99,10 @@ impl DepthMessageGenerator {
     fn round_to_hundreth(n: f64) -> f64 {
         (n * 100.0).round() / 100.0
     }
+    fn round(x: f64, decimals: u32) -> f64 {
+        let y = 10i64.pow(decimals) as f64;
+        (x * y).round() / y
+    }
     pub fn depth_balanced_orderbook(
         &mut self,
         depth: usize,
@@ -105,20 +112,28 @@ impl DepthMessageGenerator {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
         for i in 0..exchange_locations {
-            for j in mid_price..mid_price + depth {
+            let mut current_level: f64 = mid_price as f64;
+            for _ in mid_price..mid_price + depth {
+                current_level =
+                    DepthMessageGenerator::round_to_hundreth(current_level - self.level_diff);
+                println!("current level is {}", current_level);
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
-                depth_update.p = j as f64;
+                depth_update.p = current_level;
                 depth_update.q = 1 as f64;
                 depth_update.l = i as u8;
                 asks.push(depth_update);
             }
         }
         for i in 0..exchange_locations {
-            for j in mid_price..mid_price - depth {
+            let mut current_level: f64 = mid_price as f64;
+            for _ in mid_price..mid_price - depth {
+                current_level = DepthMessageGenerator::round_to_hundreth(
+                    current_level - self.level_diff as f64,
+                );
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
-                depth_update.p = j as f64;
+                depth_update.p = current_level;
                 depth_update.q = 1 as f64;
                 depth_update.l = i as u8;
                 bids.push(depth_update);
@@ -162,18 +177,19 @@ impl DepthMessageGenerator {
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
+        let mut current_level: f64;
         for i in 0..exchange_num {
             for j in mid_price..mid_price + depth * 2 {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
-                depth_update.p = j as f64;
+                depth_update.p = j as f64; // update this
                 depth_update.q = 1 as f64;
                 depth_update.l = i as u8;
                 asks.push(depth_update);
             }
         }
         for i in 0..exchange_num {
-            for j in mid_price..mid_price - 2 * depth {
+            for j in mid_price..mid_price - depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
                 depth_update.p = j as f64;
@@ -186,6 +202,15 @@ impl DepthMessageGenerator {
     }
 }
 
+fn round(x: f64, decimals: u32) -> f64 {
+    let y = 10i64.pow(decimals) as f64;
+    (x * y).round() / y
+}
+
+fn round_to_hundreth(num: f64) -> f64 {
+    (num * 100.0).round() / 1000.0
+}
+
 impl Default for DepthMessageGenerator {
     fn default() -> Self {
         Self {
@@ -193,6 +218,7 @@ impl Default for DepthMessageGenerator {
             price: 27000.0,
             vol_std: 200.0,
             price_std: 0.1,
+            level_diff: 0.01,
         }
     }
 }
