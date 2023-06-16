@@ -2,7 +2,7 @@ use crossbeam_channel::{bounded, Receiver, RecvError, Sender};
 use std::collections::VecDeque;
 
 use config::RingBufferConfig;
-use market_object::DepthUpdate;
+use market_objects::DepthUpdate;
 use std::error::Error;
 use std::fmt;
 use tracing::{debug, error, info, warn};

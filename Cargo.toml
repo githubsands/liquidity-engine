@@ -11,6 +11,7 @@ members = [
     "testing/exchange-stubs",
     "internal-objects",
     "market-objects",
+    "orderbook",
 ]
 
 [dependencies]

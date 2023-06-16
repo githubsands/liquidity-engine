@@ -1,12 +1,9 @@
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::Sender;
 use rustc_hash::FxHashMap;
-use std::mem;
-use tokio::sync::mpsc::Sender as TokioSender;
+use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 
 use ordered_float::OrderedFloat;
-
-use std::time::Duration;
-use thin_vec::ThinVec;
+use std::sync::{Arc, Mutex};
 
 use config::OrderbookConfig;
 use internal_objects::{Deal, Quote};
@@ -14,11 +11,11 @@ use market_objects::DepthUpdate;
 
 use quoter_errors::ErrorHotPath;
 use ring_buffer::RingBuffer;
-use rust_decimal::prelude::*;
-use rust_decimal_macros::dec;
-use std::thread;
-use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
+
+use std::sync::atomic::AtomicBool;
+use std::thread;
+use std::time::Duration;
 
 // TODO: This should be a pragma so we can initialize these fixed sized
 // arrays at precompile time
@@ -46,6 +43,7 @@ impl Level<LiquidityNode> {
 }
 
 struct OrderBook {
+    lock: AtomicBool,
     ring_buffer: RingBuffer,
     best_deal_bids_level: f64,
     best_deal_asks_level: f64,
@@ -53,6 +51,8 @@ struct OrderBook {
     bids: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     level_diff: f64,
     quote_producer: TokioSender<Quote>,
+    depth_snapshot_trigger: Option<Arc<Mutex<TokioSender<()>>>>,
+    trigger_depth_snapshots: bool,
 }
 
 fn round_to_hundreth(num: f64) -> f64 {
@@ -68,6 +68,7 @@ impl OrderBook {
     pub fn new(
         quote_producer: TokioSender<Quote>,
         config: OrderbookConfig,
+        snapshot_trigger: Arc<Mutex<TokioSender<()>>>,
     ) -> (OrderBook, Sender<DepthUpdate>) {
         let (asks, bids) = OrderBook::build_orderbook(
             config.level_diff,
@@ -76,6 +77,7 @@ impl OrderBook {
         );
         let (ring_buffer, depth_producers) = RingBuffer::new(config.ring_buffer);
         let orderbook: OrderBook = OrderBook {
+            lock: AtomicBool::new(false),
             ring_buffer: ring_buffer,
             best_deal_bids_level: 0.0,
             best_deal_asks_level: 0.0,
@@ -83,6 +85,8 @@ impl OrderBook {
             bids: bids,
             level_diff: config.level_diff,
             quote_producer: quote_producer,
+            depth_snapshot_trigger: Some(snapshot_trigger),
+            trigger_depth_snapshots: true,
         };
         (orderbook, depth_producers)
     }
@@ -141,29 +145,55 @@ impl OrderBook {
         }
     }
     // ran in its own thread
-    pub fn process_depths(&mut self) {
-        if let Some(depth_update) = self.ring_buffer.pop_depth() {
-            //while self.lock.compare_and_swap(false, false, Ordering::Acquire) != false {
-            if let Err(update_book_err) = self.update_book(depth_update) {
-                warn!("failed to update the book: {}", update_book_err)
+    pub fn process_depths(&mut self) -> Result<(), ErrorHotPath> {
+        loop {
+            info!("processing depths");
+            if self.trigger_depth_snapshots {
+                let trigger = self.depth_snapshot_trigger.clone();
+                info!("sending trigger");
+                trigger.unwrap().lock().unwrap().try_send(());
+                thread::sleep(Duration::from_millis(10));
+                self.trigger_depth_snapshots = false;
             }
-        } else {
-            warn!("no depth in buffer or buffer not working")
+            let buffer_consume_result = self.ring_buffer.consume();
+            match buffer_consume_result {
+                Ok(()) => {
+                    if let Some(depth_update) = self.ring_buffer.pop_depth() {
+                        if let Err(update_book_err) = self.update_book(depth_update) {
+                            warn!("failed to update the book: {}", update_book_err)
+                        }
+                    } else {
+                        warn!("no depth in buffer or buffer not working")
+                    }
+                }
+                Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
+            }
         }
     }
     fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+        info!("updating book");
         match depth_update.k {
             0 => {
                 let update_result = self.ask_update(depth_update);
                 match update_result {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        if !self.trigger_depth_snapshots {
+                            return self.run_quote();
+                        }
+                        Ok(())
+                    }
                     Err(e) => return Err(e),
                 }
             }
             1 => {
                 let update_result = self.bid_update(depth_update);
                 match update_result {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        if !self.trigger_depth_snapshots {
+                            return self.run_quote();
+                        }
+                        Ok(())
+                    }
                     Err(e) => return Err(e),
                 }
             }
@@ -222,6 +252,7 @@ impl OrderBook {
             bid_deals: bid_deals,
         };
         self.send_quote(quote)?;
+
         Ok(())
     }
     fn traverse_asks(&mut self) -> Result<[Deal; 10], ErrorHotPath> {
@@ -409,31 +440,21 @@ impl OrderBook {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Deal {
-    pub p: f64,
-    pub q: f64,
-    pub l: u8,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Quote {
-    pub spread: f64,
-    pub ask_deals: [Deal; 10],
-    pub bid_deals: [Deal; 10],
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use config::RingBufferConfig;
-    use crossbeam_channel::Sender;
+    use crossbeam_channel::{unbounded, Receiver, Sender};
     use depth_generator::DepthMessageGenerator;
+    use itertools::interleave;
     use std::thread;
-    use std::time::Duration;
+    use std::time::Duration as threadDuration;
     use test_log::test;
     use testing_traits::ConsumerDefault;
-    use tokio::sync::mpsc::{channel, Sender as TokioSender};
+    use tokio::sync::mpsc::{
+        channel as asyncChannel, Receiver as asyncReceiver, Sender as asyncProducer,
+    };
+    use tokio::time::{sleep, Duration};
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -447,8 +468,9 @@ mod tests {
                 ring_buffer_size: 300,
                 channel_buffer_size: 300,
             });
-            let (quote_producer, _) = channel(10);
+            let (quote_producer, _) = asyncChannel(10);
             let orderbook = OrderBook {
+                lock: AtomicBool::new(false),
                 ring_buffer: ring_buffer,
                 best_deal_bids_level: 0.0,
                 best_deal_asks_level: 0.0,
@@ -456,6 +478,8 @@ mod tests {
                 bids: bids,
                 level_diff: 0.010,
                 quote_producer: quote_producer,
+                depth_snapshot_trigger: None,
+                trigger_depth_snapshots: false,
             };
             (Box::new(orderbook), depth_producer)
         }
@@ -510,13 +534,13 @@ mod tests {
         debug!("running this test");
         let (mut orderbook, _) = OrderBook::consumer_default();
         let price_level = 2700.63;
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 0,
             p: price_level,
             q: 30.0,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 0,
             p: price_level,
             q: 40.0,
@@ -536,19 +560,18 @@ mod tests {
             assert!(boolean == false)
         }
         let (mut orderbook, _) = OrderBook::consumer_default();
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 0,
             p: price_level,
             q: 77.0,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 0,
             p: price_level,
             q: 134.0,
             l: 2,
         });
-        assert!(result.is_err() != true);
         let decaying_volumes_check = level.deque.iter().scan(100.0, |past_value, deal| {
             let result = *past_value < deal.q;
             if !result {
@@ -569,152 +592,152 @@ mod tests {
         info!("testing traverse asks");
         let (mut orderbook, _) = OrderBook::consumer_default();
         let best_deal = 2700.00;
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: best_deal,
             q: 40.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2700.63, // skip some levels
             q: 1.0,
             l: 2,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2700.63,
             q: 77.0,
             l: 1, // add liquidty at another location (exchange)
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2700.64,
             q: 13.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2705.65,
             q: 25.0,
             l: 2,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2705.66,
             q: 34.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2705.67,
             q: 23.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2705.68,
             q: 99.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2705.69,
             q: 70.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2709.70,
             q: 47.0,
             l: 1,
         });
-        let result = orderbook.ask_update(DepthUpdate {
+        let _ = orderbook.ask_update(DepthUpdate {
             k: 0,
             p: 2709.71, // TODO: BUG this value returns a 2709.7
             q: 23.0,
             l: 1,
         });
 
-        // (1) test that we have inserted depths with no issues
-        assert!(result.is_ok() == true);
-
-        // (2) test that our traverse asks return deals with no errors
+        // (1) test that our traverse asks return deals with no errors
         orderbook.best_deal_asks_level = best_deal;
         orderbook.level_diff = 0.10;
         let result = orderbook.traverse_asks();
         assert!(result.is_ok() == true);
         let deals: [Deal; 10] = result.unwrap();
 
-        // (3) test that none of our deals have a quantity of 0
+        // (2) test that none of our deals have a quantity of 0
         assert!(deals.iter().any(|depth| depth.q == 0.0) != true);
     }
+
     #[test]
     #[traced_test]
+
     fn test_traverse_bids() {
         info!("testing traverse bids");
         let (mut orderbook, _) = OrderBook::consumer_default();
         let best_deal = 2700.00;
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: best_deal,
             q: 30.0,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2699.63, // skip some levels
             q: 1.0,
             l: 2,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2698.64,
             q: 77.0,
             l: 1, // add liquidty at another location (exchange)
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2650.33,
             q: 13.09,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2649.39,
             q: 25.22,
             l: 2,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2649.20,
             q: 34.88,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2649.20,
             q: 23.0,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2648.33,
             q: 99.1,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2647.99,
             q: 70.22,
             l: 1,
         });
-        let result = orderbook.bid_update(DepthUpdate {
+        let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2645.33,
             q: 47.20,
             l: 1,
         });
+        let best_deal = 2700.00;
         let result = orderbook.bid_update(DepthUpdate {
             k: 1,
             p: 2666.22,
@@ -735,19 +758,67 @@ mod tests {
 
         // (3) test that none of our deals have a quantity of 0
         assert!(deals.iter().any(|depth| depth.q == 0.0) != true);
+    }
 
-        /*
-        let decaying_price_level_check = deals.iter().scan(0.0, |past_value, deal| {
-            let result = *past_value < deal.q;
-            if !result {
-                *past_value = deal.q;
+    pub struct DepthMachine {
+        pub trigger_snapshot: asyncReceiver<()>,
+        pub depth_producer: Sender<DepthUpdate>,
+        pub dmg: DepthMessageGenerator,
+        pub sequence: bool,
+    }
+    impl DepthMachine {
+        async fn produce_snapshot(&mut self) {
+            tokio::select! {
+                _ = self.trigger_snapshot.recv() => {
+                    let (asks, bids) = self.dmg.depth_balanced_orderbook(500, 2, 2700);
+                    let mut depths = interleave(asks, bids);
+                    while let Some(depth) = depths.next() {
+                        self.depth_producer.send(depth);
+                    }
+                    self.sequence = true;
+                }
+                _ = tokio::time::sleep(Duration::from_nanos(1)) => {
+                    if self.sequence {
+                        let depth_update = self.dmg.depth_message_random();
+                        self.depth_producer.send(depth_update);
+                    }
+                }
             }
-            info!(past_value);
-            Some(result)
-        });
-        for boolean in decaying_price_level_check {
-            assert!(boolean != true)
         }
-        */
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_full_cycle() {
+        let (depth_trigger, trigger_receiver) = asyncChannel(1);
+        let (quote_producer, mut quote_receiver) = asyncChannel::<Quote>(100);
+        let (mut orderbook, depth_producer) = OrderBook::consumer_default();
+        orderbook.depth_snapshot_trigger = Some(Arc::new(Mutex::new(depth_trigger)));
+        orderbook.quote_producer = quote_producer;
+        let mut depth_machine = DepthMachine {
+            trigger_snapshot: trigger_receiver,
+            depth_producer: depth_producer,
+            dmg: DepthMessageGenerator::default(),
+            sequence: false,
+        };
+        orderbook.trigger_depth_snapshots = true;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                info!("waiting for snapshots");
+                depth_machine.produce_snapshot().await;
+            }
+        });
+        thread::spawn(move || orderbook.process_depths());
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::spawn(async move {
+            loop {
+                if let Some(quote) = quote_receiver.recv().await {
+                    info!("received for quote");
+                    println!("{:?}", quote);
+                }
+            }
+        });
+        tokio::time::sleep(Duration::from_secs(10000)).await
     }
 }

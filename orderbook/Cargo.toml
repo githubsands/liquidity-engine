@@ -22,7 +22,7 @@ config =  { path = "../config"}
 testing-traits= { path = "../testing/testing-traits" }
 depth-generator = { path = "../testing/depth-generator"}
 thin-vec = "0.2.12"
-tokio = "1.28.1"
+tokio = { version = "1.28.1", features = ["full"] }
 thin_str = "0.1.0"
 fixed-vec-deque = "0.1.11"
 thincollections = "0.5.4"
@@ -34,3 +34,4 @@ libmath = "0.2.1"
 static_assertions = "1.1.0"
 rust_decimal_macros = "1.29.1"
 rust_decimal = "1.29.1"
+itertools = "0.10.5"
