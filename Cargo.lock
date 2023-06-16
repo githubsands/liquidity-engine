@@ -469,6 +469,7 @@ dependencies = [
  "market-objects",
  "rand 0.8.5",
  "rand_distr",
+ "tracing",
 ]
 
 [[package]]
@@ -1448,6 +1449,7 @@ dependencies = [
  "market-objects",
  "ordered-float",
  "quoter-errors",
+ "rand 0.8.5",
  "ring-buffer",
  "rust_decimal",
  "rust_decimal_macros",

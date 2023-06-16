@@ -1,6 +1,7 @@
 use market_objects::DepthUpdate;
 use rand::{thread_rng, Rng};
 use rand_distr::{Distribution, Normal};
+use tracing::info;
 
 extern crate rand;
 
@@ -124,12 +125,11 @@ impl DepthMessageGenerator {
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
-        for i in 1..exchange_locations {
+        for i in 1..=exchange_locations {
             let mut current_level: f64 = mid_price as f64;
-            for _ in mid_price..mid_price + depth {
+            for _ in mid_price..=mid_price + depth {
                 current_level =
                     DepthMessageGenerator::round_to_hundreth(current_level - self.level_diff);
-                println!("current level is {}", current_level);
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
                 depth_update.p = current_level;
@@ -138,9 +138,9 @@ impl DepthMessageGenerator {
                 asks.push(depth_update);
             }
         }
-        for i in 1..exchange_locations {
+        for i2 in 1..=exchange_locations {
             let mut current_level: f64 = mid_price as f64;
-            for _ in mid_price..mid_price - depth {
+            for _ in (mid_price - depth)..=mid_price {
                 current_level = DepthMessageGenerator::round_to_hundreth(
                     current_level - self.level_diff as f64,
                 );
@@ -148,7 +148,7 @@ impl DepthMessageGenerator {
                 depth_update.k = 1;
                 depth_update.p = current_level;
                 depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
+                depth_update.l = i2 as u8;
                 bids.push(depth_update);
             }
         }
@@ -161,24 +161,24 @@ impl DepthMessageGenerator {
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
-        for i in 1..exchange_num {
-            for j in mid_price..mid_price + depth {
+        for i2 in 1..exchange_num {
+            for j2 in mid_price..mid_price - 2 * depth {
                 let mut depth_update = DepthUpdate::default();
-                depth_update.k = 0;
-                depth_update.p = j as f64;
+                depth_update.k = 1;
+                depth_update.p = j2 as f64;
                 depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
-                asks.push(depth_update);
+                depth_update.l = i2 as u8;
+                bids.push(depth_update);
             }
         }
         for i in 1..exchange_num {
-            for j in mid_price..mid_price - 2 * depth {
+            for j in mid_price..mid_price + depth {
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
                 depth_update.p = j as f64;
                 depth_update.q = 1 as f64;
                 depth_update.l = i as u8;
-                bids.push(depth_update);
+                asks.push(depth_update);
             }
         }
         (asks, bids)

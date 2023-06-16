@@ -161,16 +161,34 @@ impl OrderBook {
         }
     }
     pub fn process_depths(&mut self) -> Result<(), ErrorHotPath> {
-        loop {
-            info!("processing depths");
-            if self.trigger_depth_snapshots {
-                let trigger = self.depth_snapshot_trigger.clone();
-                info!("sending trigger");
-                trigger.unwrap().lock().unwrap().try_send(());
-                thread::sleep(Duration::from_secs(5));
-                self.trigger_depth_snapshots = false;
-                self.run_quote = false;
+        info!("processing depths");
+        if self.trigger_depth_snapshots {
+            let trigger = self.depth_snapshot_trigger.clone();
+            info!("sending trigger");
+            trigger.unwrap().lock().unwrap().try_send(());
+            self.trigger_depth_snapshots = false;
+            'snapshot_consume: loop {
+                let buffer_consume_result = self.ring_buffer.consume();
+                match buffer_consume_result {
+                    Ok(()) => match self.ring_buffer.pop_depth() {
+                        Some(depth_update) => {
+                            info!("depth update is: {:?}", depth_update);
+                            if let Err(update_book_err) = self.update_book(depth_update) {
+                                warn!("failed to update the book: {}", update_book_err)
+                            }
+                        }
+                        None => {
+                            info!("no snapshot depths left in buffer");
+                            break 'snapshot_consume;
+                        }
+                    },
+                    Err(error) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
+                }
             }
+        }
+        info!("QUOTE ON ON ON consumed snapshot depths turning run quoter on");
+        self.run_quote = true;
+        loop {
             let buffer_consume_result = self.ring_buffer.consume();
             match buffer_consume_result {
                 Ok(()) => {
@@ -191,7 +209,8 @@ impl OrderBook {
         info!("updating book");
         match depth_update.k {
             0 => {
-                if self.best_deal_asks_level < depth_update.p {
+                // we want the least expensive ask  - this is our best deal due to it being closer
+                if self.best_deal_asks_level > depth_update.p {
                     self.best_deal_asks_level = depth_update.p;
                     info!("updating best ask {}", depth_update.p);
                 }
@@ -207,7 +226,9 @@ impl OrderBook {
                 }
             }
             1 => {
-                if self.best_deal_bids_level > depth_update.p {
+                // we want the most expensive bid - this is our best deal due to it being closer
+                // to the spread
+                if self.best_deal_bids_level < depth_update.p {
                     self.best_deal_bids_level = depth_update.p;
                     info!("updating best bid {}", depth_update.p);
                 }
@@ -801,13 +822,13 @@ mod tests {
                 tokio::select! {
                     _ = self.trigger_snapshot.recv() => {
                         let (asks, bids) = self.dmg.depth_balanced_orderbook(500, 2, 2700);
-                        let mut depths = interleave(asks, bids);
+                        let mut depths = interleave(bids, asks);
                         while let Some(depth) = depths.next() {
                             info!("sending snashot depth: {:?}",depth);
                             self.depth_producer.send(depth);
                         }
                         self.sequence = true;
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        tokio::time::sleep(Duration::from_secs(60)).await;
                         return
                     }
                 }
@@ -847,7 +868,7 @@ mod tests {
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 depth_machine.produce_snapshot_depths().await;
-                depth_machine.produce_depths().await;
+                // depth_machine.produce_depths().await;
             }
         });
         thread::spawn(move || orderbook.process_depths());
