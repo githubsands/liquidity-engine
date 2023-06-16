@@ -53,6 +53,7 @@ struct OrderBook {
     quote_producer: TokioSender<Quote>,
     depth_snapshot_trigger: Option<Arc<Mutex<TokioSender<()>>>>,
     trigger_depth_snapshots: bool,
+    run_quote: bool,
 }
 
 fn round_to_hundreth(num: f64) -> f64 {
@@ -80,13 +81,14 @@ impl OrderBook {
             lock: AtomicBool::new(false),
             ring_buffer: ring_buffer,
             best_deal_bids_level: 0.0,
-            best_deal_asks_level: 0.0,
+            best_deal_asks_level: 10000000.0,
             asks: asks,
             bids: bids,
             level_diff: config.level_diff,
             quote_producer: quote_producer,
             depth_snapshot_trigger: Some(snapshot_trigger),
             trigger_depth_snapshots: true,
+            run_quote: false,
         };
         (orderbook, depth_producers)
     }
@@ -145,6 +147,19 @@ impl OrderBook {
         }
     }
     // ran in its own thread
+    pub fn snapshot_trigger(&mut self) -> Result<(), ErrorHotPath> {
+        loop {
+            info!("processing depths");
+            if self.trigger_depth_snapshots {
+                let trigger = self.depth_snapshot_trigger.clone();
+                info!("sending trigger");
+                trigger.unwrap().lock().unwrap().try_send(());
+                thread::sleep(Duration::from_secs(5));
+                self.trigger_depth_snapshots = false;
+                self.run_quote = false;
+            }
+        }
+    }
     pub fn process_depths(&mut self) -> Result<(), ErrorHotPath> {
         loop {
             info!("processing depths");
@@ -152,13 +167,15 @@ impl OrderBook {
                 let trigger = self.depth_snapshot_trigger.clone();
                 info!("sending trigger");
                 trigger.unwrap().lock().unwrap().try_send(());
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_secs(5));
                 self.trigger_depth_snapshots = false;
+                self.run_quote = false;
             }
             let buffer_consume_result = self.ring_buffer.consume();
             match buffer_consume_result {
                 Ok(()) => {
                     if let Some(depth_update) = self.ring_buffer.pop_depth() {
+                        info!("depth update is: {:?}", depth_update);
                         if let Err(update_book_err) = self.update_book(depth_update) {
                             warn!("failed to update the book: {}", update_book_err)
                         }
@@ -174,10 +191,14 @@ impl OrderBook {
         info!("updating book");
         match depth_update.k {
             0 => {
+                if self.best_deal_asks_level < depth_update.p {
+                    self.best_deal_asks_level = depth_update.p;
+                    info!("updating best ask {}", depth_update.p);
+                }
                 let update_result = self.ask_update(depth_update);
                 match update_result {
                     Ok(_) => {
-                        if !self.trigger_depth_snapshots {
+                        if self.run_quote {
                             return self.run_quote();
                         }
                         Ok(())
@@ -186,10 +207,14 @@ impl OrderBook {
                 }
             }
             1 => {
+                if self.best_deal_bids_level > depth_update.p {
+                    self.best_deal_bids_level = depth_update.p;
+                    info!("updating best bid {}", depth_update.p);
+                }
                 let update_result = self.bid_update(depth_update);
                 match update_result {
                     Ok(_) => {
-                        if !self.trigger_depth_snapshots {
+                        if self.run_quote {
                             return self.run_quote();
                         }
                         Ok(())
@@ -313,10 +338,9 @@ impl OrderBook {
         while current_ask_deal_counter < 10 {
             let current_level_asks = self.asks.get_mut(&OrderedFloat(current_level));
             if current_level_asks.is_none() {
+                current_level = round(current_level + 0.01, 2);
                 warn!("level {} does not exist in the ASKS book", current_level);
-                return Err(ErrorHotPath::OrderBook(
-                    "level does not exist in orderbook".to_string(), //TODO: get rid of this dst
-                ));
+                continue;
             }
             let mut liquid_asks_levels = current_level_asks
                 .unwrap()
@@ -401,10 +425,14 @@ impl OrderBook {
                 let current_level_bids = self.bids.get_mut(&OrderedFloat(current_level));
                 if current_level_bids.is_none() {
                     warn!("level {} does not exist in the BIDS book", current_level);
+                    current_level = round(current_level - 0.01, 2);
+                    continue;
+                    /*
                     return Err(ErrorHotPath::OrderBook(
-                        "level does not exist in orderbook".to_string(), // TODO: get rid of this
-                                                                         // dst
+                        "failed to traverse bids level does not exist in orderbook".to_string(), // TODO: get rid of this
+                                                                                                 // dst
                     ));
+                    */
                 }
                 let mut liquid_bids_levels = current_level_bids
                     .unwrap()
@@ -432,7 +460,7 @@ impl OrderBook {
     }
     #[inline]
     fn send_quote(&self, quote: Quote) -> Result<(), ErrorHotPath> {
-        while let Err(e) = self.quote_producer.try_send(quote) {
+        while let Err(_) = self.quote_producer.try_send(quote) {
             warn!("failed to send quote to grpc server {:?}", quote);
             continue;
         }
@@ -480,6 +508,7 @@ mod tests {
                 quote_producer: quote_producer,
                 depth_snapshot_trigger: None,
                 trigger_depth_snapshots: false,
+                run_quote: false,
             };
             (Box::new(orderbook), depth_producer)
         }
@@ -767,26 +796,36 @@ mod tests {
         pub sequence: bool,
     }
     impl DepthMachine {
-        async fn produce_snapshot(&mut self) {
-            tokio::select! {
-                _ = self.trigger_snapshot.recv() => {
-                    let (asks, bids) = self.dmg.depth_balanced_orderbook(500, 2, 2700);
-                    let mut depths = interleave(asks, bids);
-                    while let Some(depth) = depths.next() {
-                        self.depth_producer.send(depth);
+        async fn produce_snapshot_depths(&mut self) {
+            if !self.sequence {
+                tokio::select! {
+                    _ = self.trigger_snapshot.recv() => {
+                        let (asks, bids) = self.dmg.depth_balanced_orderbook(500, 2, 2700);
+                        let mut depths = interleave(asks, bids);
+                        while let Some(depth) = depths.next() {
+                            info!("sending snashot depth: {:?}",depth);
+                            self.depth_producer.send(depth);
+                        }
+                        self.sequence = true;
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        return
                     }
-                    self.sequence = true;
                 }
+            }
+            return;
+        }
+        async fn produce_depths(&mut self) {
+            tokio::select! {
                 _ = tokio::time::sleep(Duration::from_nanos(1)) => {
                     if self.sequence {
                         let depth_update = self.dmg.depth_message_random();
+                        info!("sending depth");
                         self.depth_producer.send(depth_update);
                     }
                 }
             }
         }
     }
-
     #[tokio::test]
     #[traced_test]
     async fn test_full_cycle() {
@@ -795,18 +834,20 @@ mod tests {
         let (mut orderbook, depth_producer) = OrderBook::consumer_default();
         orderbook.depth_snapshot_trigger = Some(Arc::new(Mutex::new(depth_trigger)));
         orderbook.quote_producer = quote_producer;
+        let mut dmg = DepthMessageGenerator::default();
+        dmg.price_std = 100.0;
         let mut depth_machine = DepthMachine {
             trigger_snapshot: trigger_receiver,
             depth_producer: depth_producer,
-            dmg: DepthMessageGenerator::default(),
+            dmg: dmg,
             sequence: false,
         };
         orderbook.trigger_depth_snapshots = true;
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                info!("waiting for snapshots");
-                depth_machine.produce_snapshot().await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                depth_machine.produce_snapshot_depths().await;
+                depth_machine.produce_depths().await;
             }
         });
         thread::spawn(move || orderbook.process_depths());

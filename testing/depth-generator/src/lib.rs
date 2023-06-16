@@ -219,7 +219,7 @@ impl Default for DepthMessageGenerator {
     fn default() -> Self {
         Self {
             volume: 400.0,
-            price: 27000.0,
+            price: 2700.0,
             vol_std: 200.0,
             price_std: 0.1,
             level_diff: 0.01,
