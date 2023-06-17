@@ -1,4 +1,4 @@
-use crossbeam_channel::{bounded, Receiver, RecvError, Sender};
+use crossbeam_channel::{bounded, Receiver, RecvError, Sender, TryRecvError};
 use std::collections::VecDeque;
 
 use config::RingBufferConfig;
@@ -8,7 +8,7 @@ use std::fmt;
 use tracing::{debug, error, info, warn};
 
 pub enum BufferError {
-    Failed(RecvError),
+    Failed(TryRecvError),
 }
 
 impl fmt::Display for BufferError {
@@ -53,15 +53,32 @@ impl RingBuffer {
         (rb, producer)
     }
     pub fn consume(&mut self) -> Result<(), BufferError> {
-        let result = self.depth_consumer.recv();
+        let result = self.depth_consumer.try_recv();
         match result {
             Ok(depth_update) => {
                 self.push_back(depth_update);
                 Ok(())
             }
-            Err(e) => return Err(BufferError::Failed(e)),
+            Err(e) => match e {
+                TryRecvError::Empty => Ok(()),
+                TryRecvError::Disconnected => {
+                    return Err(BufferError::Failed(TryRecvError::Disconnected));
+                }
+            },
         }
     }
+    /*
+    pub enum TryRecvError {
+        /// A message could not be received because the channel is empty.
+        ///
+        /// If this is a zero-capacity channel, then the error indicates that there was no sender
+        /// available to send a message at the time.
+        Empty,
+
+        /// The message could not be received because the channel is empty and disconnected.
+        Disconnected,
+    }
+        */
 
     /*
     if let Ok(order) = self.depth_consumer.recv() {
@@ -74,8 +91,9 @@ impl RingBuffer {
         if let Some(order) = self.buffer.pop_front() {
             info!("pop_depth in rb");
             return Some(order);
+        } else {
+            return None;
         }
-        None
     }
     pub fn push_back(&mut self, item: DepthUpdate) {
         if self.buffer.len() == self.size {

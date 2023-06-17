@@ -11,6 +11,7 @@ pub enum ErrorHotPath {
     ExchangeStreamSnapshot(String),
     ReceivedNonTextMessageFromExchange,
     OrderBook(String),
+    MaxTraversedReached,
 }
 
 impl fmt::Display for ErrorHotPath {
@@ -31,6 +32,9 @@ impl fmt::Display for ErrorHotPath {
             }
             ErrorHotPath::ExchangeStreamSnapshot(s) => {
                 write!(f, "HTTPSnapshot error: {}", s)
+            }
+            ErrorHotPath::MaxTraversedReached => {
+                write!(f, "MaxTraversedReached")
             }
         }
     }
