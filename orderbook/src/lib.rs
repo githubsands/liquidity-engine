@@ -50,8 +50,6 @@ struct OrderBook {
     ring_buffer: RingBuffer,
     best_deal_bids_level: (f64, f64),
     best_deal_asks_level: (f64, f64),
-    update_best_deal_bid: bool,
-    update_best_deal_ask: bool,
     asks: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     bids: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     max_ask_level: f64,
@@ -87,9 +85,7 @@ impl OrderBook {
         let orderbook: OrderBook = OrderBook {
             lock: AtomicBool::new(false),
             ring_buffer: ring_buffer,
-            update_best_deal_ask: false,
-            update_best_deal_bid: false,
-            best_deal_bids_level: (0.0, 0.0),
+            best_deal_bids_level: (f64::INFINITY, 0.0),
             best_deal_asks_level: (0.0, 0.0),
             asks: asks,
             bids: bids,
@@ -187,16 +183,18 @@ impl OrderBook {
 
     #[inline]
     pub fn process_depths(&mut self) -> Result<(), ErrorHotPath> {
-        info!("processing depths");
+        debug!("CACHE: processing depths");
         if self.trigger_depth_snapshots {
-            // TODO: Do not clone here
+            debug!("CACHE: depth snapshots are triggered");
             let trigger = self.depth_snapshot_trigger.clone();
-            info!("sending trigger");
             loop {
                 let snapshot_trigger_result =
                     trigger.as_ref().unwrap().lock().unwrap().try_send(());
                 match snapshot_trigger_result {
-                    Ok(_) => break,
+                    Ok(_) => {
+                        debug!("CACHE: sent_trigger success");
+                        break;
+                    }
                     Err(snapshot_trigger_error) => {
                         warn!(
                             "failed to send snapshot due to {:?}, trying again.",
@@ -207,25 +205,25 @@ impl OrderBook {
                 }
             }
             self.trigger_depth_snapshots = false;
-            'snapshot_consume: loop {
-                info!("consuming depths");
+            loop {
+                debug!("DEBUG consuming snapshot depths");
                 let buffer_consume_result = self.ring_buffer.consume();
                 match buffer_consume_result {
                     Ok(()) => match self.ring_buffer.pop_depth() {
                         Some(depth_update) => {
-                            info!("depth update is: {:?}", depth_update);
+                            debug!("CACHE depth update is: {:?}", depth_update);
                             if let Err(update_book_err) = self.update_book_snapshots(depth_update) {
                                 warn!("failed to update the book: {}", update_book_err)
                             }
                         }
                         None => {
-                            info!("no snapshot depths left in buffer");
-                            break 'snapshot_consume;
+                            debug!("CACHE no snapshot depths left in buffer");
+                            break;
                         }
                     },
                     Err(buffer_error) => {
                         return {
-                            info!("received buffer error {}", buffer_error);
+                            debug!("received buffer error {}", buffer_error);
                             Err(ErrorHotPath::OrderBook("buffer error".to_string()))
                         }
                     }
@@ -234,7 +232,7 @@ impl OrderBook {
         }
         self.run_quote = true;
         loop {
-            info!("locking check");
+            debug!("CACHE: prelock");
             while self.lock.compare_and_swap(false, true, Ordering::SeqCst) != false {
                 let buffer_consume_result = self.ring_buffer.consume();
                 match buffer_consume_result {
@@ -260,31 +258,23 @@ impl OrderBook {
         match depth_update.k {
             0 => {
                 if depth_update.p > self.best_deal_asks_level.0 {
-                    info!("no new best deal");
-                    return;
-                }
-                // incoming ask update is at our current known best deal but does it 0
-                // out our liquidity?
-                if depth_update.p == self.best_deal_asks_level.0 {
+                    debug!("CACHE no new best deal");
                     return;
                 }
 
                 if depth_update.p < self.best_deal_asks_level.0 {
                     self.best_deal_asks_level.0 = depth_update.p;
+                    debug!("CACHE updating best deal asks leve");
                     if depth_update.q > self.best_deal_asks_level.1 {
                         self.best_deal_asks_level.1 = depth_update.q;
+                        debug!("CACHE updating best deal asks level liquidity");
                         return;
                     }
                 }
             }
             1 => {
                 if depth_update.p < self.best_deal_bids_level.0 {
-                    info!("no new best deal");
-                    return;
-                }
-                // incoming ask update is at our current known best deal but does it 0
-                // out our liquidity?
-                if depth_update.p == self.best_deal_bids_level.0 {
+                    debug!("CACHE no new best deal");
                     return;
                 }
 
@@ -298,6 +288,35 @@ impl OrderBook {
             }
             _ => {
                 warn!("invalid k type from depth_update")
+            }
+        }
+    }
+
+    #[inline]
+    fn update_book_snapshots(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+        debug!("CACHE updating the book {:?}", depth_update);
+        match depth_update.k {
+            0 => {
+                self.cache_best_deal_snapshot(depth_update);
+                let update_result = self.ask_update(depth_update);
+                match update_result {
+                    Ok(_) => Ok(()),
+                    Err(e) => return Err(e),
+                }
+            }
+            1 => {
+                self.cache_best_deal_update(depth_update);
+                let update_result = self.bid_update(depth_update);
+                match update_result {
+                    Ok(_) => Ok(()),
+                    Err(e) => return Err(e),
+                }
+            }
+            _ => {
+                warn!("poor depth update direction received: {}", depth_update.k);
+                return Err(ErrorHotPath::OrderBook(
+                    "0 1 ASKS or 1 BIDS given by depth update".to_string(),
+                ));
             }
         }
     }
@@ -350,7 +369,6 @@ impl OrderBook {
                 // check if it 0s out our liqudity at this new level before assigning it
                 if depth_update.p < self.best_deal_asks_level.0 {
                     if depth_update.q + self.best_deal_asks_level.1 <= 0.0 {
-                        self.update_best_deal_ask = true;
                         return;
                     }
                 }
@@ -390,7 +408,6 @@ impl OrderBook {
                 // check if it 0s out our liqudity at this new level before assigning it
                 if depth_update.p > self.best_deal_bids_level.0 {
                     if depth_update.q + self.best_deal_asks_level.1 <= 0.0 {
-                        self.update_best_deal_ask = true;
                         return;
                     }
                 }
@@ -443,44 +460,30 @@ impl OrderBook {
     }
 
     #[inline]
-    fn update_book_snapshots(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
-        debug!("updating the book {:?}", depth_update);
-        info!("updating book");
-        match depth_update.k {
-            0 => {
-                self.cache_best_deal_snapshot(depth_update);
-                let update_result = self.ask_update(depth_update);
-                match update_result {
-                    Ok(_) => {
-                        if self.run_quote {
-                            debug!("running a quote");
-                            return self.run_quote();
-                        }
-                        Ok(())
+    fn ask_update(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+        if let Some(asks) = self.asks.get_mut(&OrderedFloat(depth_update.p)) {
+            asks.deque
+                .iter_mut()
+                .find(|liquidity_node| liquidity_node.l == depth_update.l)
+                .map(|liquidity_node| {
+                    let liquidity = liquidity_node.q + depth_update.q;
+                    if liquidity < 0.0 {
+                        return Err(ErrorHotPath::OrderBookNegativeLiquidity);
                     }
-                    Err(e) => return Err(e),
-                }
-            }
-            1 => {
-                self.cache_best_deal_update(depth_update);
-                let update_result = self.bid_update(depth_update);
-                match update_result {
-                    Ok(_) => {
-                        if self.run_quote {
-                            return self.run_quote();
-                        }
-                        Ok(())
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            _ => {
-                warn!("poor depth update direction received: {}", depth_update.k);
-                return Err(ErrorHotPath::OrderBook(
-                    "0 1 ASKS or 1 BIDS given by depth update".to_string(),
-                ));
-            }
+                    liquidity_node.q = liquidity;
+                    Ok(())
+                });
+            asks.deque
+                .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
+        } else {
+            warn!(
+                "no location {} found at price level {} in BIDS",
+                depth_update.l, depth_update.p
+            );
+            return Err(ErrorHotPath::OrderBook("no level found".to_string()));
         }
+        debug!("inserted the ask update: succesfully {:?}", depth_update);
+        Ok(())
     }
 
     #[inline]
@@ -506,33 +509,6 @@ impl OrderBook {
             );
             return Err(ErrorHotPath::OrderBook("no level found".to_string()));
         }
-        Ok(())
-    }
-
-    #[inline]
-    fn ask_update(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
-        if let Some(asks) = self.asks.get_mut(&OrderedFloat(depth_update.p)) {
-            asks.deque
-                .iter_mut()
-                .find(|liquidity_node| liquidity_node.l == depth_update.l)
-                .map(|liquidity_node| {
-                    let liquidity = liquidity_node.q + depth_update.q;
-                    if liquidity < 0.0 {
-                        return Err(ErrorHotPath::OrderBookNegativeLiquidity);
-                    }
-                    liquidity_node.q = liquidity;
-                    Ok(())
-                });
-            asks.deque
-                .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
-        } else {
-            warn!(
-                "no location {} found at price level {} in BIDS",
-                depth_update.l, depth_update.p
-            );
-            return Err(ErrorHotPath::OrderBook("no level found".to_string()));
-        }
-        debug!("inserted the ask update: succesfully {:?}", depth_update);
         Ok(())
     }
 
@@ -780,8 +756,6 @@ mod tests {
             let orderbook = OrderBook {
                 lock: AtomicBool::new(false),
                 ring_buffer: ring_buffer,
-                update_best_deal_bid: false,
-                update_best_deal_ask: false,
                 best_deal_bids_level: (0.0, 0.0),
                 best_deal_asks_level: (0.0, 0.0),
                 asks: asks,
@@ -1088,7 +1062,7 @@ mod tests {
                     let (asks, bids) = self.dmg.depth_balanced_orderbook(500, 2, 2700);
                     let mut depths = interleave(bids, asks);
                     while let Some(depth) = depths.next() {
-                        info!("sending snashot depth: {:?}",depth);
+                        debug!("CACHE debug sending snashot depth: {:?}",depth);
                         self.depth_producer.send(depth);
                     }
                     tokio::time::sleep(Duration::from_secs(100)).await;
@@ -1120,8 +1094,6 @@ mod tests {
         let (mut orderbook, depth_producer) = OrderBook::consumer_default();
         orderbook.depth_snapshot_trigger = Some(Arc::new(Mutex::new(depth_trigger)));
         orderbook.quote_producer = quote_producer;
-        orderbook.best_deal_bids_level = (2700.0, 0.0);
-        orderbook.best_deal_asks_level = (2700.0, 0.0);
         let mut dmg = DepthMessageGenerator::default();
         dmg.price_std = 3.0;
         let mut depth_machine = DepthMachine {
@@ -1138,9 +1110,10 @@ mod tests {
                 depth_machine.produce_depths().await;
             }
         });
-        thread::spawn(move || orderbook.process_depths());
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        let mut quotes: Arc<Mutex<Vec<Quote>>>;
+        thread::spawn(move || {
+            orderbook.consume_depths();
+            orderbook.consume_depths();
+        });
         tokio::spawn(async move {
             loop {
                 if let Some(quote) = quote_receiver.recv().await {
@@ -1148,18 +1121,6 @@ mod tests {
                 }
             }
         });
-        /*
-        let current_quotes = 0;
-        while current_quotes < test_quote_numbers {
-            for quote in quotes.lock().unwrap().append(quotes) {
-                // 1. test quotes asks are accesnding
-                //
-                //
-                // 2...
-            }
-            tokio::time::sleep(Duration::from_secs(test_length_seconds)).await
-        }
-        */
         tokio::time::sleep(Duration::from_secs(test_length_seconds)).await
     }
     async fn test_quotes() {
