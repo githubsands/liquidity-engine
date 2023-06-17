@@ -153,6 +153,8 @@ impl OrderBook {
         }
         return (asks, bids, max_ask_level, min_bid_level);
     }
+
+    #[inline]
     pub fn consume_depths(&mut self) -> Result<(), ErrorHotPath> {
         let buffer_consume_result = self.ring_buffer.consume();
         match buffer_consume_result {
@@ -163,6 +165,8 @@ impl OrderBook {
             Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
         }
     }
+
+    #[inline]
     pub fn snapshot_trigger(&mut self) -> Result<(), ErrorHotPath> {
         loop {
             info!("processing depths");
@@ -176,13 +180,28 @@ impl OrderBook {
             }
         }
     }
+
+    #[inline]
     pub fn process_depths(&mut self) -> Result<(), ErrorHotPath> {
         info!("processing depths");
         if self.trigger_depth_snapshots {
             // TODO: Do not clone here
             let trigger = self.depth_snapshot_trigger.clone();
             info!("sending trigger");
-            trigger.unwrap().lock().unwrap().try_send(());
+            loop {
+                let snapshot_trigger_result =
+                    trigger.as_ref().unwrap().lock().unwrap().try_send(());
+                match snapshot_trigger_result {
+                    Ok(_) => break,
+                    Err(snapshot_trigger_error) => {
+                        warn!(
+                            "failed to send snapshot due to {:?}, trying again.",
+                            snapshot_trigger_error
+                        );
+                        continue;
+                    }
+                }
+            }
             self.trigger_depth_snapshots = false;
             'snapshot_consume: loop {
                 info!("consuming depths");
@@ -222,6 +241,7 @@ impl OrderBook {
                             if let Err(update_book_err) = self.update_book(depth_update) {
                                 warn!("failed to update the book: {}", update_book_err)
                             }
+                            // NOTE: CACHE BEST DEAL HERE?
                         } else {
                             // debug!("no depth in buffer or buffer")
                         }
@@ -231,6 +251,8 @@ impl OrderBook {
             }
         }
     }
+
+    #[inline]
     fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         debug!("updating the book {:?}", depth_update);
         info!("updating book");
@@ -279,13 +301,21 @@ impl OrderBook {
             }
         }
     }
+
     #[inline]
     fn bid_update(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         if let Some(bids) = self.bids.get_mut(&OrderedFloat(depth_update.p)) {
             bids.deque
                 .iter_mut()
                 .find(|liquidity_node| liquidity_node.l == depth_update.l)
-                .map(|liquidity_node| liquidity_node.q = depth_update.q);
+                .map(|liquidity_node| {
+                    let liquidity = liquidity_node.q + depth_update.q;
+                    if liquidity < 0.0 {
+                        return Err(ErrorHotPath::OrderBookNegativeLiquidity);
+                    }
+                    liquidity_node.q = liquidity;
+                    Ok(())
+                });
             bids.deque
                 .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
         } else {
@@ -297,13 +327,21 @@ impl OrderBook {
         }
         Ok(())
     }
+
     #[inline]
     fn ask_update(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         if let Some(asks) = self.asks.get_mut(&OrderedFloat(depth_update.p)) {
             asks.deque
                 .iter_mut()
                 .find(|liquidity_node| liquidity_node.l == depth_update.l)
-                .map(|liquidity_node| liquidity_node.q = depth_update.q);
+                .map(|liquidity_node| {
+                    let liquidity = liquidity_node.q + depth_update.q;
+                    if liquidity < 0.0 {
+                        return Err(ErrorHotPath::OrderBookNegativeLiquidity);
+                    }
+                    liquidity_node.q = liquidity;
+                    Ok(())
+                });
             asks.deque
                 .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
         } else {
@@ -329,6 +367,8 @@ impl OrderBook {
             ask_deals: ask_deals,
             bid_deals: bid_deals,
         };
+        debug!("quotes asks: are {:?}", quote.ask_deals);
+        debug!("quotes bids: are {:?}", quote.bid_deals);
         self.send_quote(quote)?;
         Ok(())
     }
@@ -422,7 +462,7 @@ impl OrderBook {
                 current_level = round(current_level + 0.01, 2);
                 continue;
             } else {
-                return Err(ErrorHotPath::MaxTraversedReached);
+                return Err(ErrorHotPath::OrderBookMaxTraversedReached);
             }
         }
         return Ok(deals);
@@ -512,7 +552,7 @@ impl OrderBook {
                 current_level = round(current_level - 0.01, 2);
                 continue;
             } else {
-                return Err(ErrorHotPath::MaxTraversedReached);
+                return Err(ErrorHotPath::OrderBookMaxTraversedReached);
             }
         }
         return Ok(deals);
@@ -849,6 +889,8 @@ mod tests {
         assert!(deals.iter().any(|depth| depth.q == 0.0) != true);
     }
 
+    fn test_best_deal_if_deal_liquidity_is_zero() {}
+
     pub struct DepthMachine {
         pub trigger_snapshot: asyncReceiver<()>,
         pub depth_producer: Sender<DepthUpdate>,
@@ -887,8 +929,9 @@ mod tests {
     }
     #[tokio::test]
     #[traced_test]
-    async fn test_full_cycle() {
+    async fn test_quotes_full_cycle() {
         let test_length_seconds = 300;
+        let test_quotes_numbers = 1000;
         let (depth_trigger, trigger_receiver) = asyncChannel(1);
         let (quote_producer, mut quote_receiver) = asyncChannel::<Quote>(100);
         let (mut orderbook, depth_producer) = OrderBook::consumer_default();
@@ -914,14 +957,46 @@ mod tests {
         });
         thread::spawn(move || orderbook.process_depths());
         tokio::time::sleep(Duration::from_secs(30)).await;
+        let mut quotes: Arc<Mutex<Vec<Quote>>>;
         tokio::spawn(async move {
             loop {
                 if let Some(quote) = quote_receiver.recv().await {
-                    info!("received for quote");
-                    println!("{:?}", quote);
+                    // quotes.lock().unwrap().append(quotes);
                 }
             }
         });
+        /*
+        let current_quotes = 0;
+        while current_quotes < test_quote_numbers {
+            for quote in quotes.lock().unwrap().append(quotes) {
+                // 1. test quotes asks are accesnding
+                //
+                //
+                // 2...
+            }
+            tokio::time::sleep(Duration::from_secs(test_length_seconds)).await
+        }
+        */
         tokio::time::sleep(Duration::from_secs(test_length_seconds)).await
+    }
+    async fn test_quotes() {
+        // test quotes asks are accesending;
+        //
+        //
+        // test quotes are decending:
+        //
+        //
+        // test spread is positive
+        //
+        //
+        // test quantities are positive
+        //
+        //
+        // test quantities don't equal zero
+        //
+        //
+        // test multiplie exchanges
+        //
+        //
     }
 }
