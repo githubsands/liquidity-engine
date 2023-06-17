@@ -48,8 +48,10 @@ impl Level<LiquidityNode> {
 struct OrderBook {
     lock: AtomicBool,
     ring_buffer: RingBuffer,
-    best_deal_bids_level: f64,
-    best_deal_asks_level: f64,
+    best_deal_bids_level: (f64, f64),
+    best_deal_asks_level: (f64, f64),
+    update_best_deal_bid: bool,
+    update_best_deal_ask: bool,
     asks: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     bids: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     max_ask_level: f64,
@@ -85,8 +87,10 @@ impl OrderBook {
         let orderbook: OrderBook = OrderBook {
             lock: AtomicBool::new(false),
             ring_buffer: ring_buffer,
-            best_deal_bids_level: 0.0,
-            best_deal_asks_level: 10000000.0,
+            update_best_deal_ask: false,
+            update_best_deal_bid: false,
+            best_deal_bids_level: (0.0, 0.0),
+            best_deal_asks_level: (0.0, 0.0),
             asks: asks,
             bids: bids,
             max_ask_level: max_ask_level,
@@ -210,7 +214,7 @@ impl OrderBook {
                     Ok(()) => match self.ring_buffer.pop_depth() {
                         Some(depth_update) => {
                             info!("depth update is: {:?}", depth_update);
-                            if let Err(update_book_err) = self.update_book(depth_update) {
+                            if let Err(update_book_err) = self.update_book_snapshots(depth_update) {
                                 warn!("failed to update the book: {}", update_book_err)
                             }
                         }
@@ -238,10 +242,9 @@ impl OrderBook {
                         if let Some(depth_update) = self.ring_buffer.pop_depth() {
                             debug!("depth update is prelock: {:?}", depth_update);
                             debug!("depth update is postlock: {:?}", depth_update);
-                            if let Err(update_book_err) = self.update_book(depth_update) {
+                            if let Err(update_book_err) = self.update_book_depths(depth_update) {
                                 warn!("failed to update the book: {}", update_book_err)
                             }
-                            // NOTE: CACHE BEST DEAL HERE?
                         } else {
                             // debug!("no depth in buffer or buffer")
                         }
@@ -253,17 +256,158 @@ impl OrderBook {
     }
 
     #[inline]
-    fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+    fn cache_best_deal_snapshot(&mut self, depth_update: DepthUpdate) {
+        match depth_update.k {
+            0 => {
+                if depth_update.p > self.best_deal_asks_level.0 {
+                    info!("no new best deal");
+                    return;
+                }
+                // incoming ask update is at our current known best deal but does it 0
+                // out our liquidity?
+                if depth_update.p == self.best_deal_asks_level.0 {
+                    return;
+                }
+
+                if depth_update.p < self.best_deal_asks_level.0 {
+                    self.best_deal_asks_level.0 = depth_update.p;
+                    if depth_update.q > self.best_deal_asks_level.1 {
+                        self.best_deal_asks_level.1 = depth_update.q;
+                        return;
+                    }
+                }
+            }
+            1 => {
+                if depth_update.p < self.best_deal_bids_level.0 {
+                    info!("no new best deal");
+                    return;
+                }
+                // incoming ask update is at our current known best deal but does it 0
+                // out our liquidity?
+                if depth_update.p == self.best_deal_bids_level.0 {
+                    return;
+                }
+
+                if depth_update.p > self.best_deal_bids_level.0 {
+                    self.best_deal_bids_level.0 = depth_update.p;
+                    if depth_update.q > self.best_deal_bids_level.1 {
+                        self.best_deal_asks_level.1 = depth_update.q;
+                        return;
+                    }
+                }
+            }
+            _ => {
+                warn!("invalid k type from depth_update")
+            }
+        }
+    }
+
+    #[inline]
+    fn cache_best_deal_update(&mut self, depth_update: DepthUpdate) {
+        match depth_update.k {
+            0 => {
+                if depth_update.p > self.best_deal_asks_level.0 {
+                    info!("no new best deal");
+                    return;
+                }
+                // incoming ask update is at our current known best deal but does it 0
+                // out our liquidity?
+                if depth_update.p == self.best_deal_asks_level.0 {
+                    // check if we have liquidity at this level node
+                    if depth_update.q + self.best_deal_asks_level.0 <= 0.0 {
+                        return;
+                    } else {
+                        // if we now have 0 liquidity at or noted best deal we no longer have a
+                        // best deal -- search for next best deal on the asks side by traversing up
+                        // our orderbook
+                        let mut found: bool = false;
+                        let mut current_level = depth_update.p - self.level_diff;
+                        while !found {
+                            if let Some(found_liquidity) = self.asks[&OrderedFloat(current_level)]
+                                .deque
+                                .into_iter()
+                                .find(|liquidity_node| liquidity_node.q != 0.0)
+                            {
+                                self.best_deal_asks_level.0 = current_level;
+                                self.best_deal_asks_level.1 = found_liquidity.q; // price levels
+                                                                                 // are sorted by
+                                                                                 // decesnding
+                                                                                 // liquidity
+                                                                                 // so we
+                                                                                 // only need to
+                                                                                 // know if the
+                                                                                 // first node is
+                                                                                 // liquid
+                                found = true;
+                            } else {
+                                current_level = current_level + self.level_diff;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                // incoming ask update is at a lower level therefore it may be a better deal.
+                // check if it 0s out our liqudity at this new level before assigning it
+                if depth_update.p < self.best_deal_asks_level.0 {
+                    if depth_update.q + self.best_deal_asks_level.1 <= 0.0 {
+                        self.update_best_deal_ask = true;
+                        return;
+                    }
+                }
+            }
+            1 => {
+                if depth_update.p < self.best_deal_bids_level.0 {
+                    info!("no new best deal");
+                    return;
+                }
+                if depth_update.p == self.best_deal_bids_level.0 {
+                    // check if we have liquidity at this level node
+                    if depth_update.q + self.best_deal_asks_level.0 <= 0.0 {
+                        return;
+                    } else {
+                        // if we now have 0 liquidity at or noted best deal we no longer have a
+                        // best deal -- search for next best deal on the asks side by traversing up
+                        // our orderbook
+                        let mut found: bool = false;
+                        let mut current_level = depth_update.p - self.level_diff;
+                        while !found {
+                            if let Some(found_liquidity) = self.bids[&OrderedFloat(current_level)]
+                                .deque
+                                .into_iter()
+                                .find(|liquidity_node| liquidity_node.q != 0.0)
+                            {
+                                self.best_deal_bids_level.0 = current_level;
+                                self.best_deal_bids_level.1 = found_liquidity.q;
+                                found = true;
+                            } else {
+                                current_level = current_level - self.level_diff;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                // incoming bid update is at a higher level therefore it may be a better deal.
+                // check if it 0s out our liqudity at this new level before assigning it
+                if depth_update.p > self.best_deal_bids_level.0 {
+                    if depth_update.q + self.best_deal_asks_level.1 <= 0.0 {
+                        self.update_best_deal_ask = true;
+                        return;
+                    }
+                }
+            }
+            _ => {
+                warn!("invalid k type from depth_update")
+            }
+        }
+    }
+
+    #[inline]
+    fn update_book_depths(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
         debug!("updating the book {:?}", depth_update);
         info!("updating book");
         match depth_update.k {
             0 => {
-                // we want the least expensive ask  - this is our best deal due to it being closer
-                if self.best_deal_asks_level == 0.0 {
-                    self.best_deal_asks_level = depth_update.p;
-                } else if self.best_deal_asks_level > depth_update.p {
-                    self.best_deal_asks_level = depth_update.p;
-                }
+                self.cache_best_deal_update(depth_update);
                 let update_result = self.ask_update(depth_update);
                 match update_result {
                     Ok(_) => {
@@ -277,11 +421,48 @@ impl OrderBook {
                 }
             }
             1 => {
-                if self.best_deal_bids_level == 0.0 {
-                    self.best_deal_bids_level = depth_update.p;
-                } else if self.best_deal_bids_level < depth_update.p {
-                    self.best_deal_bids_level = depth_update.p;
+                self.cache_best_deal_update(depth_update);
+                let update_result = self.bid_update(depth_update);
+                match update_result {
+                    Ok(_) => {
+                        if self.run_quote {
+                            return self.run_quote();
+                        }
+                        Ok(())
+                    }
+                    Err(e) => return Err(e),
                 }
+            }
+            _ => {
+                warn!("poor depth update direction received: {}", depth_update.k);
+                return Err(ErrorHotPath::OrderBook(
+                    "0 1 ASKS or 1 BIDS given by depth update".to_string(),
+                ));
+            }
+        }
+    }
+
+    #[inline]
+    fn update_book_snapshots(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+        debug!("updating the book {:?}", depth_update);
+        info!("updating book");
+        match depth_update.k {
+            0 => {
+                self.cache_best_deal_snapshot(depth_update);
+                let update_result = self.ask_update(depth_update);
+                match update_result {
+                    Ok(_) => {
+                        if self.run_quote {
+                            debug!("running a quote");
+                            return self.run_quote();
+                        }
+                        Ok(())
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            1 => {
+                self.cache_best_deal_update(depth_update);
                 let update_result = self.bid_update(depth_update);
                 match update_result {
                     Ok(_) => {
@@ -428,7 +609,7 @@ impl OrderBook {
             },
         ];
         let mut current_ask_deal_counter: usize = 0;
-        let mut current_level: f64 = self.best_deal_asks_level;
+        let mut current_level: f64 = self.best_deal_asks_level.0;
         while current_ask_deal_counter < 10 {
             debug!("deals are: {:?}", deals);
             if current_level < self.max_ask_level + self.level_diff {
@@ -522,7 +703,7 @@ impl OrderBook {
             },
         ];
         let mut current_bid_deal_counter: usize = 0;
-        let mut current_level: f64 = self.best_deal_bids_level;
+        let mut current_level: f64 = self.best_deal_bids_level.0;
         while current_bid_deal_counter < 10 {
             if current_level > self.min_bid_level - self.level_diff {
                 let current_level_bids = self.bids.get_mut(&OrderedFloat(current_level));
@@ -599,8 +780,10 @@ mod tests {
             let orderbook = OrderBook {
                 lock: AtomicBool::new(false),
                 ring_buffer: ring_buffer,
-                best_deal_bids_level: 0.0,
-                best_deal_asks_level: 0.0,
+                update_best_deal_bid: false,
+                update_best_deal_ask: false,
+                best_deal_bids_level: (0.0, 0.0),
+                best_deal_asks_level: (0.0, 0.0),
                 asks: asks,
                 bids: bids,
                 max_ask_level: max_ask_level,
@@ -790,7 +973,7 @@ mod tests {
         });
 
         // (1) test that our traverse asks return deals with no errors
-        orderbook.best_deal_asks_level = best_deal;
+        orderbook.best_deal_asks_level.0 = best_deal;
         orderbook.level_diff = 0.10;
         let result = orderbook.traverse_asks();
         assert!(result.is_ok() == true);
@@ -878,7 +1061,7 @@ mod tests {
         assert!(result.is_ok() == true);
 
         // (2) test that our traverse asks return deals with no errors
-        orderbook.best_deal_bids_level = best_deal;
+        orderbook.best_deal_bids_level.0 = best_deal;
         orderbook.level_diff = 0.10;
         let result = orderbook.traverse_bids();
         assert!(result.is_ok() == true);
@@ -937,8 +1120,8 @@ mod tests {
         let (mut orderbook, depth_producer) = OrderBook::consumer_default();
         orderbook.depth_snapshot_trigger = Some(Arc::new(Mutex::new(depth_trigger)));
         orderbook.quote_producer = quote_producer;
-        orderbook.best_deal_bids_level = 2700.0;
-        orderbook.best_deal_asks_level = 2700.0;
+        orderbook.best_deal_bids_level = (2700.0, 0.0);
+        orderbook.best_deal_asks_level = (2700.0, 0.0);
         let mut dmg = DepthMessageGenerator::default();
         dmg.price_std = 3.0;
         let mut depth_machine = DepthMachine {
