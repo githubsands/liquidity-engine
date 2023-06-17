@@ -52,6 +52,8 @@ struct OrderBook {
     best_deal_asks_level: f64,
     asks: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
     bids: FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
+    max_ask_level: f64,
+    min_bid_level: f64,
     level_diff: f64,
     quote_producer: TokioSender<Quote>,
     depth_snapshot_trigger: Option<Arc<Mutex<TokioSender<()>>>>,
@@ -74,7 +76,7 @@ impl OrderBook {
         config: OrderbookConfig,
         snapshot_trigger: Arc<Mutex<TokioSender<()>>>,
     ) -> (OrderBook, Sender<DepthUpdate>) {
-        let (asks, bids) = OrderBook::build_orderbook(
+        let (asks, bids, max_ask_level, min_bid_level) = OrderBook::build_orderbook(
             config.level_diff,
             config.mid_price as f64,
             config.depth as f64,
@@ -87,6 +89,8 @@ impl OrderBook {
             best_deal_asks_level: 10000000.0,
             asks: asks,
             bids: bids,
+            max_ask_level: max_ask_level,
+            min_bid_level: min_bid_level,
             level_diff: config.level_diff,
             quote_producer: quote_producer,
             depth_snapshot_trigger: Some(snapshot_trigger),
@@ -102,11 +106,17 @@ impl OrderBook {
     ) -> (
         FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
         FxHashMap<OrderedFloat<f64>, Level<LiquidityNode>>,
+        f64,
+        f64,
     ) {
         let mut asks = FxHashMap::<OrderedFloat<f64>, Level<LiquidityNode>>::default();
         let mut current_level = mid_level;
-        for _ in 0..=depth as u64 * 2 {
+        let mut max_ask_level: f64 = 0.0;
+        for i in 0..=depth as u64 * 2 {
             current_level = current_level + level_diff;
+            if i == depth as u64 {
+                max_ask_level = round_to_hundreth(current_level);
+            }
             info!("asks: {}", round_to_hundreth(current_level));
             let level = Level::new(current_level);
             asks.insert(OrderedFloat(round_to_hundreth(current_level)), level);
@@ -129,15 +139,21 @@ impl OrderBook {
             bids.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
         current_level = mid_level;
+        let mut min_bid_level: f64 = 0.0;
         for i in 0..=depth as u64 * 2 {
             if i > 0 {
                 current_level = current_level - level_diff;
+            }
+            if i == depth as u64 {
+                min_bid_level = round_to_hundreth(current_level);
             }
             info!("bids: {}", round_to_hundreth(current_level));
             let level = Level::new(current_level);
             bids.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
-        return (asks, bids);
+        debug!("MAX ASK LEVEL IS {:?}", max_ask_level);
+        debug!("MIN BID LEVEL IS {:?}", min_bid_level);
+        return (asks, bids, max_ask_level, min_bid_level);
     }
     pub fn consume_depths(&mut self) -> Result<(), ErrorHotPath> {
         let buffer_consume_result = self.ring_buffer.consume();
@@ -149,7 +165,6 @@ impl OrderBook {
             Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
         }
     }
-    // ran in its own thread
     pub fn snapshot_trigger(&mut self) -> Result<(), ErrorHotPath> {
         loop {
             info!("processing depths");
@@ -368,7 +383,9 @@ impl OrderBook {
         let mut current_ask_deal_counter: usize = 0;
         let mut current_level: f64 = self.best_deal_asks_level;
         while current_ask_deal_counter < 10 {
-            if current_level < MAX_ASK_TRAVERSE_LEVEL {
+            info!("deals are: {:?}", deals);
+            if current_level < self.max_ask_level + self.level_diff {
+                info!("at level {}", current_level);
                 let current_level_asks = self.asks.get_mut(&OrderedFloat(current_level));
                 if current_level_asks.is_none() {
                     current_level = round(current_level + 0.01, 2);
@@ -390,6 +407,7 @@ impl OrderBook {
                     deals[current_ask_deal_counter].l = bid.l; // the exchange id
                     deals[current_ask_deal_counter].q = bid.q; // quantity/volume/liquidity
                     current_ask_deal_counter += 1;
+                    info!("added to deal array");
                 }
                 // this is the ask side so traverse up the orderbook
                 current_level = round(current_level + 0.01, 2);
@@ -457,7 +475,7 @@ impl OrderBook {
         let mut current_bid_deal_counter: usize = 0;
         let mut current_level: f64 = self.best_deal_bids_level;
         while current_bid_deal_counter < 10 {
-            if current_level > MAX_BID_TRAVERSE_LEVEL {
+            if current_level > self.min_bid_level - self.level_diff {
                 let current_level_bids = self.bids.get_mut(&OrderedFloat(current_level));
                 if current_level_bids.is_none() {
                     warn!("level {} does not exist in the BIDS book", current_level);
@@ -471,7 +489,6 @@ impl OrderBook {
                     .filter(|&liquidity_node| liquidity_node.q != 0.0)
                     .peekable();
                 if liquid_bids_levels.peek().is_none() {
-                    debug!("is none");
                     current_level = round(current_level - 0.01, 2);
                     continue;
                 }
@@ -504,17 +521,16 @@ impl OrderBook {
 mod tests {
     use super::*;
     use config::RingBufferConfig;
-    use crossbeam_channel::{unbounded, Receiver, Sender};
+    use crossbeam_channel::Sender;
     use depth_generator::DepthMessageGenerator;
     use itertools::interleave;
     use std::thread;
-    use std::time::Duration as threadDuration;
     use test_log::test;
     use testing_traits::ConsumerDefault;
     use tokio::sync::mpsc::{
         channel as asyncChannel, Receiver as asyncReceiver, Sender as asyncProducer,
     };
-    use tokio::time::{sleep, Duration};
+    use tokio::time::Duration;
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -523,7 +539,8 @@ mod tests {
             let level_diff: f64 = 0.10;
             let mid_level: f64 = 27000.0; // TODO: this needs to be thought about
             let depth: f64 = 5000.0;
-            let (asks, bids) = OrderBook::build_orderbook(level_diff, mid_level, depth);
+            let (asks, bids, max_ask_level, min_bid_level) =
+                OrderBook::build_orderbook(level_diff, mid_level, depth);
             let (ring_buffer, depth_producer) = RingBuffer::new(RingBufferConfig {
                 ring_buffer_size: 300,
                 channel_buffer_size: 300,
@@ -536,6 +553,8 @@ mod tests {
                 best_deal_asks_level: 0.0,
                 asks: asks,
                 bids: bids,
+                max_ask_level: max_ask_level,
+                min_bid_level: min_bid_level,
                 level_diff: 0.010,
                 quote_producer: quote_producer,
                 depth_snapshot_trigger: None,
@@ -758,50 +777,50 @@ mod tests {
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2650.33,
+            p: 2690.33,
             q: 13.09,
             l: 1,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2670.39,
+            p: 2689.39,
             q: 25.22,
             l: 2,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2660.20,
+            p: 2687.20,
             q: 34.88,
             l: 1,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2659.20,
+            p: 2685.20,
             q: 23.0,
             l: 1,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2658.33,
+            p: 2684.33,
             q: 99.1,
             l: 1,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2656.99,
+            p: 2682.99,
             q: 70.22,
             l: 1,
         });
         let _ = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2653.33,
+            p: 2680.33,
             q: 47.20,
             l: 1,
         });
         let best_deal = 2700.00;
         let result = orderbook.bid_update(DepthUpdate {
             k: 1,
-            p: 2652.22,
+            p: 2679.22,
             q: 23.33,
             l: 1,
         });
