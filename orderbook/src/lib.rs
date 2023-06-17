@@ -151,8 +151,6 @@ impl OrderBook {
             let level = Level::new(current_level);
             bids.insert(OrderedFloat(round_to_hundreth(current_level)), level);
         }
-        debug!("MAX ASK LEVEL IS {:?}", max_ask_level);
-        debug!("MIN BID LEVEL IS {:?}", min_bid_level);
         return (asks, bids, max_ask_level, min_bid_level);
     }
     pub fn consume_depths(&mut self) -> Result<(), ErrorHotPath> {
@@ -213,25 +211,28 @@ impl OrderBook {
         }
         self.run_quote = true;
         loop {
-            let buffer_consume_result = self.ring_buffer.consume();
-            match buffer_consume_result {
-                Ok(()) => {
-                    if let Some(depth_update) = self.ring_buffer.pop_depth() {
-                        info!("depth update is: {:?}", depth_update);
-                        while self.lock.compare_and_swap(false, true, Ordering::SeqCst) != false {
+            info!("locking check");
+            while self.lock.compare_and_swap(false, true, Ordering::SeqCst) != false {
+                let buffer_consume_result = self.ring_buffer.consume();
+                match buffer_consume_result {
+                    Ok(()) => {
+                        if let Some(depth_update) = self.ring_buffer.pop_depth() {
+                            debug!("depth update is prelock: {:?}", depth_update);
+                            debug!("depth update is postlock: {:?}", depth_update);
                             if let Err(update_book_err) = self.update_book(depth_update) {
                                 warn!("failed to update the book: {}", update_book_err)
                             }
+                        } else {
+                            // debug!("no depth in buffer or buffer")
                         }
-                    } else {
-                        // debug!("no depth in buffer or buffer")
                     }
+                    Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
                 }
-                Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
             }
         }
     }
     fn update_book(&mut self, depth_update: DepthUpdate) -> Result<(), ErrorHotPath> {
+        debug!("updating the book {:?}", depth_update);
         info!("updating book");
         match depth_update.k {
             0 => {
@@ -245,6 +246,7 @@ impl OrderBook {
                 match update_result {
                     Ok(_) => {
                         if self.run_quote {
+                            debug!("running a quote");
                             return self.run_quote();
                         }
                         Ok(())
@@ -311,6 +313,7 @@ impl OrderBook {
             );
             return Err(ErrorHotPath::OrderBook("no level found".to_string()));
         }
+        debug!("inserted the ask update: succesfully {:?}", depth_update);
         Ok(())
     }
 
@@ -318,16 +321,20 @@ impl OrderBook {
     fn run_quote(&mut self) -> Result<(), ErrorHotPath> {
         let ask_deals = self.traverse_asks()?;
         let bid_deals = self.traverse_bids()?;
+        debug!("locking prelock");
+        self.lock.store(true, Ordering::SeqCst);
+        debug!("locking postlock");
         let quote = Quote {
             spread: ask_deals[0].p - bid_deals[0].p,
             ask_deals: ask_deals,
             bid_deals: bid_deals,
         };
-        self.lock.store(false, Ordering::SeqCst);
         self.send_quote(quote)?;
         Ok(())
     }
+    #[inline]
     fn traverse_asks(&mut self) -> Result<[Deal; 10], ErrorHotPath> {
+        debug!("traversing asks!");
         let mut deals: [Deal; 10] = [
             Deal {
                 p: 0.0,
@@ -383,7 +390,7 @@ impl OrderBook {
         let mut current_ask_deal_counter: usize = 0;
         let mut current_level: f64 = self.best_deal_asks_level;
         while current_ask_deal_counter < 10 {
-            info!("deals are: {:?}", deals);
+            debug!("deals are: {:?}", deals);
             if current_level < self.max_ask_level + self.level_diff {
                 info!("at level {}", current_level);
                 let current_level_asks = self.asks.get_mut(&OrderedFloat(current_level));
@@ -392,6 +399,7 @@ impl OrderBook {
                     warn!("level {} does not exist in the ASKS book", current_level);
                     continue;
                 }
+                debug!("this guy current levels are {:?}", current_level);
                 let mut liquid_asks_levels = current_level_asks
                     .unwrap()
                     .deque
@@ -403,11 +411,12 @@ impl OrderBook {
                     continue;
                 }
                 while let Some(bid) = liquid_asks_levels.next() {
+                    debug!("we are adding deals at level: {:?}", current_level);
                     deals[current_ask_deal_counter].p = current_level; // price level
                     deals[current_ask_deal_counter].l = bid.l; // the exchange id
                     deals[current_ask_deal_counter].q = bid.q; // quantity/volume/liquidity
                     current_ask_deal_counter += 1;
-                    info!("added to deal array");
+                    debug!("added to deal array: {:?}", deals);
                 }
                 // this is the ask side so traverse up the orderbook
                 current_level = round(current_level + 0.01, 2);
@@ -482,6 +491,7 @@ impl OrderBook {
                     current_level = round(current_level - 0.01, 2);
                     continue;
                 }
+                debug!("this guy current levels are {:?}", current_level);
                 let mut liquid_bids_levels = current_level_bids
                     .unwrap()
                     .deque
@@ -752,7 +762,6 @@ mod tests {
 
     #[test]
     #[traced_test]
-
     fn test_traverse_bids() {
         info!("testing traverse bids");
         let (mut orderbook, _) = OrderBook::consumer_default();
