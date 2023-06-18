@@ -71,6 +71,7 @@ impl DepthMessageGenerator {
             p: DepthMessageGenerator::round_to_hundreth(price as f64),
             q: volume as f64,
             l: location,
+            s: false,
         }
     }
     pub fn depth_message(&mut self, location: u8, is_ask: bool) -> DepthUpdate {
@@ -89,6 +90,7 @@ impl DepthMessageGenerator {
             p: DepthMessageGenerator::round_to_hundreth(price as f64),
             q: volume as f64,
             l: location,
+            s: false,
         }
     }
     pub fn depth_bulk(

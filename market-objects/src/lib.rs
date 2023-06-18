@@ -5,17 +5,19 @@ use std::fmt::{Display, Error as ErrorFMT, Formatter};
 
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
 // Order defines an order object:
 // k: 0 ask, 1 bid
 // p: price or level
 // q: quantity
 // l: location: 1 binance, 2 binance_usa, 3 bybit
+// s: snapshot update vs websocket update
 pub struct DepthUpdate {
     pub k: u8,
     pub p: f64,
     pub q: f64,
     pub l: u8,
+    pub s: bool,
 }
 
 impl Default for DepthUpdate {
@@ -25,6 +27,7 @@ impl Default for DepthUpdate {
             p: 0.0,
             q: 0.0,
             l: 0,
+            s: false,
         }
     }
 }
@@ -47,12 +50,14 @@ impl WSOrderBookUpdateBinance {
                 p: self.b,
                 q: self.B,
                 l: 1,
+                s: false,
             },
             DepthUpdate {
                 k: 1,
                 p: self.a,
                 q: self.A,
                 l: 1,
+                s: false,
             },
         )
     }
@@ -160,12 +165,14 @@ impl WSDepthUpdateBinance {
             p: update.price,    // Assuming BinanceDepthUpdate has a `price` field
             q: update.quantity, // and a `quantity` field
             l: location,
+            s: false,
         });
         let ask_updates = self.a.into_iter().map(move |update| DepthUpdate {
             k: 1,
             p: update.price,
             q: update.quantity,
             l: location,
+            s: false,
         });
 
         (bid_updates, ask_updates)
@@ -194,12 +201,14 @@ impl HTTPSnapShotDepthResponseBinance {
             p: update.price,
             q: update.quantity,
             l: location,
+            s: true,
         });
         let ask_updates = self.asks.into_iter().map(move |update| DepthUpdate {
             k: 1,
             p: update.price,
             q: update.quantity,
             l: location,
+            s: true,
         });
 
         (bid_updates, ask_updates)
@@ -227,6 +236,7 @@ impl WSDepthUpdateByBit {
             p: update.price,    // Assuming BinanceDepthUpdate has a `price` field
             q: update.quantity, // and a `quantity` field
             l: location,
+            s: false,
         });
 
         let ask_updates = self.data.a.into_iter().map(move |update| DepthUpdate {
@@ -234,6 +244,7 @@ impl WSDepthUpdateByBit {
             p: update.price,
             q: update.quantity,
             l: location,
+            s: false,
         });
 
         (bid_updates, ask_updates)
@@ -289,6 +300,7 @@ impl HTTPSnapShotDepthResponseByBit {
             p: update.price,
             q: update.quantity,
             l: location,
+            s: true,
         });
 
         let ask_updates = self.data.a.into_iter().map(move |update| DepthUpdate {
@@ -296,6 +308,7 @@ impl HTTPSnapShotDepthResponseByBit {
             p: update.price,
             q: update.quantity,
             l: location,
+            s: true,
         });
 
         (bid_updates, ask_updates)
