@@ -6,6 +6,9 @@ use serde_json::{from_str, to_string as jsonify, Value as JsonValue};
 
 use pin_project_lite::pin_project;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
 use futures_util::sink::SinkExt;
 use itertools::interleave;
@@ -65,7 +68,7 @@ impl ExchangeStream {
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<DepthUpdate>,
         _http_client_option: bool,
-    ) -> Result<(Box<Self>, asyncSender<()>), ErrorInitialState> {
+    ) -> Result<(Rc<RefCell<Self>>, asyncSender<()>), ErrorInitialState> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
             info!("snapshot is enabled building http client");
@@ -93,9 +96,12 @@ impl ExchangeStream {
             depths_producer: orders_producer,
             http_client: http_client,
         };
-        Ok((Box::new(exchange), snapshot_trigger_tx))
+        Ok((Rc::new(RefCell::new(exchange)), snapshot_trigger_tx))
     }
-    pub async fn start(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn start(
+        &mut self,
+    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ErrorInitialState>
+    {
         let config = WebSocketConfig {
             max_send_queue: None,
             max_message_size: None,
@@ -107,21 +113,18 @@ impl ExchangeStream {
         let _ = match ws_conn_result {
             Ok((ws_conn, _)) => {
                 let (sink, stream) = ws_conn.split();
-                if self.ws_subscribe {
-                    self.subscribe_orderbooks(sink).await?;
-                }
                 self.ws_connection_orderbook_reader = Some(stream);
                 info!(
                     "connected to exchange {} at {}",
                     self.exchange_name, self.websocket_uri
-                )
+                );
+                return Ok(sink);
             }
             Err(ws_error) => {
                 error!("failed to connect to exchange {}", self.websocket_uri);
                 return Err(ErrorInitialState::WSConnection(ws_error.to_string()));
             }
         };
-        Ok(())
     }
     pub async fn run(&mut self) {
         if let Some(trigger) = &mut self.snapshot_trigger {
@@ -187,14 +190,12 @@ impl ExchangeStream {
         ),
         Box<dyn Error + Sync + Send + 'static>,
     > {
-        info!("curling snap shot from {}", self.http_snapshot_uri);
         let req_builder = self
             .http_client
             .as_ref()
             .unwrap()
             .get(self.http_snapshot_uri.clone());
         let snapshot_response_result = req_builder.send().await;
-        debug!("sending request: {:?}", snapshot_response_result);
         match snapshot_response_result {
             Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
                 (snapshot_response, 1) => {
@@ -239,40 +240,6 @@ impl ExchangeStream {
                 return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
             }
         }
-    }
-    async fn subscribe_orderbooks(
-        &mut self,
-        mut sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-    ) -> Result<(), ErrorInitialState> {
-        info!(
-            "sending orderbook subscription message: {}\nto exchange {}",
-            self.orderbook_subscription_message, self.websocket_uri
-        );
-        let json_obj_binance = serde_json::json!({
-            "method": "SUBSCRIBE",
-            "params": [
-                "btcusdt@depth",
-            ],
-            "id": 1
-        });
-        /*
-        let json_obj_bybit = serde_json::json!({
-              "op": "subscribe",
-              "args": ["orderbook.1.USDTBTC"]
-        });
-        */
-
-        let exchange_response = sink.send(Message::Text(json_obj_binance.to_string())).await;
-        // TODO: handle this differently;
-        match exchange_response {
-            Ok(response) => {
-                print!("subscription success: {:?}", response);
-            }
-            Err(error) => {
-                print!("error {}", error)
-            }
-        }
-        Ok(())
     }
     #[allow(dead_code)]
     async fn reconnect(&mut self) -> Result<(), ErrorHotPath> {
