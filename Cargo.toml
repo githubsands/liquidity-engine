@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "exchange-stream",
+    "exchange-controller",
     "testing/depth-generator",
     "testing/exchange-stubs",
     "internal-objects",
