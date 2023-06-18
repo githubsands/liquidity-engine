@@ -1,22 +1,17 @@
 use crossbeam_channel::Sender;
 
-use futures::future::try_join_all;
-
 use market_objects::DepthUpdate;
 use quoter_errors::ErrorInitialState;
-
-use tracing::{error, info};
 
 use config::ExchangeConfig;
 use exchange_stream::ExchangeStream;
 
-use futures::stream::{SplitSink, SplitStream};
+use futures::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
 
-use serde_json::{from_str, to_string as jsonify, Value as JsonValue};
-use tokio::sync::mpsc::{channel as asyncChannel, Receiver, Sender as asyncSender};
+use tokio::sync::watch::Receiver as watchReceiver;
 
 use std::rc::Rc;
 
@@ -37,22 +32,21 @@ impl Exchange {
     fn new(
         exchange_config: &ExchangeConfig,
         depth_producer: Sender<DepthUpdate>,
-    ) -> (Self, asyncSender<()>) {
+        watch_trigger: watchReceiver<()>,
+    ) -> Self {
         let exchange_stream = ExchangeStream::new(
             exchange_config,
             depth_producer.clone(),
+            watch_trigger,
             exchange_config.http_client,
         )
         .unwrap();
-        (
-            Exchange {
-                exchange_stream: exchange_stream.0,
-                ws_sink: None,
-                websocket_uri: exchange_config.ws_uri.clone(),
-                watched_pair: exchange_config.watched_pair.clone(),
-            },
-            exchange_stream.1,
-        )
+        Exchange {
+            exchange_stream: exchange_stream,
+            ws_sink: None,
+            websocket_uri: exchange_config.ws_uri.clone(),
+            watched_pair: exchange_config.watched_pair.clone(),
+        }
     }
     async fn start(&mut self) -> Result<(), ErrorInitialState> {
         let stream = self.exchange_stream.as_ref();
@@ -95,11 +89,15 @@ impl ExchangeController {
     pub fn new(
         exchange_configs: &Vec<ExchangeConfig>,
         depths_producer: Sender<DepthUpdate>,
+        watch_trigger: watchReceiver<()>,
     ) -> Result<ExchangeController, ErrorInitialState> {
         let mut exchanges: Vec<Rc<RefCell<Exchange>>> = Vec::new();
         for exchange_config in exchange_configs {
-            let (exchange, orderbook_snapshot_trigger) =
-                Exchange::new(exchange_config, depths_producer.clone());
+            let exchange = Exchange::new(
+                exchange_config,
+                depths_producer.clone(),
+                watch_trigger.clone(),
+            );
             exchanges.push(Rc::new(RefCell::new(exchange)));
         }
         Ok(ExchangeController {

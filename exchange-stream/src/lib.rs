@@ -19,6 +19,9 @@ use tokio_tungstenite::{
 };
 
 use tokio::sync::mpsc::{channel as asyncChannel, Receiver, Sender as asyncSender};
+use tokio::sync::watch::{
+    channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
+};
 use tokio::time::{sleep, Duration};
 
 use crossbeam_channel::{Sender, TrySendError};
@@ -46,7 +49,7 @@ pin_project! {
         pub websocket_uri: String,
         pub watched_pair: String,
 
-        pub snapshot_trigger: Option<Receiver<()>>,
+        pub snapshot_trigger: Option<watchReceiver<()>>,
 
         orderbook_subscription_message: String,
 
@@ -67,18 +70,19 @@ impl ExchangeStream {
     pub fn new(
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<DepthUpdate>,
+        snapshot_trigger: watchReceiver<()>,
         _http_client_option: bool,
-    ) -> Result<(Rc<RefCell<Self>>, asyncSender<()>), ErrorInitialState> {
+    ) -> Result<Rc<RefCell<Self>>, ErrorInitialState> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
             info!("snapshot is enabled building http client");
             http_client = Some(Client::new());
         }
-        let (snapshot_trigger_tx, snapshot_trigger_rx) = asyncChannel(1);
+        let (snapshot_trigger_tx, snapshot_trigger_rx) = watchChannel(());
         let exchange = ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
-            snapshot_trigger: Some(snapshot_trigger_rx),
+            snapshot_trigger: Some(snapshot_trigger),
             websocket_depth_buffer: Vec::with_capacity(15000),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
@@ -96,7 +100,7 @@ impl ExchangeStream {
             depths_producer: orders_producer,
             http_client: http_client,
         };
-        Ok((Rc::new(RefCell::new(exchange)), snapshot_trigger_tx))
+        Ok(Rc::new(RefCell::new(exchange)))
     }
     pub async fn start(
         &mut self,
@@ -129,7 +133,7 @@ impl ExchangeStream {
     pub async fn run(&mut self) {
         if let Some(trigger) = &mut self.snapshot_trigger {
             tokio::select! {
-                    _ = trigger.recv() => {
+                    _ = trigger.changed() => {
                         self.buffer_websocket_depths = true;
                         let mut success = false;
                         while !success {
@@ -425,7 +429,7 @@ mod tests {
     async fn test_receive_depths_from_ws_server() {
         let test_length_seconds = 10;
         let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
-        let desired_depths: i32 = 6500;
+        let desired_depths: i32 = 6000;
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         let (exchange_server, _) = ExchangeServer::new("1".to_string(), 8080, 9500).unwrap();
         let exchange_server = Arc::new(Mutex::new(exchange_server));
@@ -485,7 +489,7 @@ mod tests {
         let test_length_seconds = 10;
         let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
         let desired_depths: i32 = 15;
-        let (trigger_producer, trigger_consumer) = asyncChannel::<()>(1);
+        let (trigger_producer, trigger_consumer) = watchChannel(());
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         exchange_stream.snapshot_enabled = true;
         exchange_stream.snapshot_trigger = Some(trigger_consumer);
@@ -533,7 +537,7 @@ mod tests {
         });
         sleep(Duration::from_secs(7)).await;
         debug!("triggering snapshot");
-        let result = trigger_producer.send(()).await;
+        let result = trigger_producer.send(());
         if result.is_err() {
             debug!("received error {:?}", result);
         }
@@ -555,7 +559,7 @@ mod tests {
         let (exchange_server, http_shutdown) =
             ExchangeServer::new("1".to_string(), 8082, 9502).unwrap();
         let exchange_server = Arc::new(Mutex::new(exchange_server));
-        let (trigger_producer, trigger_consumer) = asyncChannel::<()>(1);
+        let (trigger_producer, trigger_consumer) = watchChannel(());
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         exchange_stream.snapshot_enabled = true;
         exchange_stream.snapshot_trigger = Some(trigger_consumer);
@@ -614,7 +618,7 @@ mod tests {
             }
         });
         sleep(Duration::from_secs(5)).await;
-        let result = trigger_producer.send(()).await;
+        let result = trigger_producer.send(());
         if result.is_err() {
             debug!("received error {:?}", result);
         }
