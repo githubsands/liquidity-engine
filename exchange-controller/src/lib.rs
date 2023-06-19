@@ -121,7 +121,7 @@ impl ExchangeController {
         tokio::join!(subscribe_task_e1, subscribe_task_e2);
     }
 
-    pub async fn run_exchange_depth_streams(&mut self) {
+    pub async fn stream_depths(&mut self) {
         let mut exchange_0 = self.exchanges[0].as_ref().borrow_mut();
         let mut exchange_1 = self.exchanges[1].as_ref().borrow_mut();
         tokio::select! {

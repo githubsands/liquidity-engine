@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "orderbook-quoter-server",
     "exchange-stream",
     "exchange-controller",
     "testing/depth-generator",
