@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub io_thread_percentage: f64,
     pub exchanges: Vec<ExchangeConfig>,
@@ -12,7 +12,7 @@ pub struct Config {
     pub grpc_server: GRPCServerConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct OrderbookConfig {
     pub ring_buffer: RingBufferConfig,
     pub asset_price_floor: f64,
@@ -20,13 +20,13 @@ pub struct OrderbookConfig {
     pub price_point_array_size: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RingBufferConfig {
     pub ring_buffer_size: usize,
     pub channel_buffer_size: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ExchangeConfig {
     pub client_name: String,
     pub exchange_name: u8,
@@ -41,7 +41,7 @@ pub struct ExchangeConfig {
     pub ignore_snapshot_websocket: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct GRPCServerConfig {
     pub host_uri: String,
 }

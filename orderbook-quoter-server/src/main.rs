@@ -6,6 +6,8 @@ pub mod pb {
                                   // before this program can correctly compile
 }
 
+use tokio::task::LocalSet;
+
 use futures::stream::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -34,6 +36,12 @@ use config::{read_yaml_config, Config};
 use tracing::{error, info};
 use tracing_subscriber;
 
+use crossbeam_channel::{bounded, Receiver as syncReceiver, Sender as syncChannel};
+use exchange_controller::ExchangeController;
+use tokio::sync::watch::{
+    channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
+};
+
 fn main() {
     tracing_subscriber::fmt::init();
     let matches = App::new("orderbook quoter server")
@@ -59,17 +67,22 @@ fn main() {
         .build()
         .unwrap();
     */
-    let res = orderbook_quoter_server(&config_file.unwrap());
+    let res = orderbook_quoter_server(config_file.unwrap());
     match res {
         Ok(_) => info!("shutting down orderbook_quoter_server"),
         Err(error) => error!("failed to run orderbook quoter server {}", error),
     }
 }
 
-fn orderbook_quoter_server(config: &Config) -> Result<(), Box<dyn Error>> {
+fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     info!("starting orderbook-quoter-server");
+
+    let (snapshot_depth_producer, snapshot_depth_consumer) = watchChannel(());
+    let (depth_producer, depth_consumer) = bounded(1000);
+
     let core_ids = core_affinity::get_core_ids().unwrap();
     let io_grpc_core = core_ids[0];
+    let config = config.clone();
     thread::spawn(move || {
         let mut async_grpc_io_rt = Builder::new_current_thread()
             .enable_io()
@@ -90,6 +103,31 @@ fn orderbook_quoter_server(config: &Config) -> Result<(), Box<dyn Error>> {
                 .unwrap();
         });
     });
+    let io_ws_core = core_ids[1];
+    let depth_producer = depth_producer.clone();
+    let snapshot_depth_consumer = snapshot_depth_consumer.clone();
+    let config = config.clone();
+    thread::spawn(move || {
+        let mut async_ws_io_rt = Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .thread_name("websocket io")
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let local = LocalSet::new();
+        let core_id = core_affinity::set_for_current(io_ws_core);
+        local.spawn_local(async move {
+            let mut exchange_controller =
+                ExchangeController::new(&config.exchanges, depth_producer, snapshot_depth_consumer)
+                    .unwrap();
+            exchange_controller.websocket_connect().await;
+            exchange_controller.subscribe_depths().await;
+            exchange_controller.stream_depths().await;
+        });
+        async_ws_io_rt.block_on(local);
+    });
+
     Ok(())
 }
 
