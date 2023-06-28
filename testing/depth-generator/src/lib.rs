@@ -2,6 +2,8 @@ use market_objects::DepthUpdate;
 use rand::{thread_rng, Rng};
 use rand_distr::{Distribution, Normal};
 
+use itertools::interleave;
+
 extern crate rand;
 
 #[derive(Clone)]
@@ -141,70 +143,219 @@ impl DepthMessageGenerator {
         }
         (asks, bids)
     }
-    pub fn depth_imbalanced_orderbook_ask(
-        depth: usize,
-        exchange_num: usize,
-        mid_price: usize,
+    pub fn depth_generate_geometric_brownian_motion_upward_trend(
+        &self,
+        exchanges: u8,
+        tick: f64,
+        s_0: f64,
+        dt: f64,
+        spread: f64,
+        length: usize,
+        drift: f64,
+        diffusion: f64,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
-        let mut asks: Vec<DepthUpdate> = vec![];
-        let mut bids: Vec<DepthUpdate> = vec![];
-        for i in 1..exchange_num {
-            for j in mid_price..mid_price + depth {
-                let mut depth_update = DepthUpdate::default();
-                depth_update.k = 0;
-                depth_update.p = j as f64;
-                depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
-                asks.push(depth_update);
+        let mut rng = rand::thread_rng();
+        let dist = Normal::new(0.0, 1.0).unwrap();
+        let depth_update_asks_0 = DepthUpdate {
+            k: 0,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let depth_update_bids_0 = DepthUpdate {
+            k: 1,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let mut asks = Vec::<DepthUpdate>::with_capacity(length);
+        let mut bids = Vec::<DepthUpdate>::with_capacity(length);
+        let mut price_diffs = Vec::<f64>::with_capacity(length);
+        let mut price_levels = Vec::<f64>::with_capacity(length);
+        price_diffs.push(tick);
+        price_levels.push(s_0);
+        asks.push(depth_update_asks_0);
+        bids.push(depth_update_bids_0);
+        let drift_factor = 0.1 + drift * dt;
+        let diffusion_factor = diffusion * dt.sqrt();
+        for idx in 1..length {
+            let price_diff = drift_factor + diffusion_factor * dist.sample(&mut rng);
+            let price_current = price_levels[idx - 1] + price_diffs[idx - 1];
+            price_levels.push(price_current);
+            price_diffs.push(price_diff);
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                })
             }
-        }
-        for i in 1..exchange_num {
-            for j in mid_price..mid_price - 2 * depth {
-                let mut depth_update = DepthUpdate::default();
-                depth_update.k = 1;
-                depth_update.p = j as f64;
-                depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
-                bids.push(depth_update);
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                })
             }
         }
         (asks, bids)
     }
-    pub fn depth_imbalanced_orderbook_bid(
-        depth: usize,
-        exchange_num: usize,
-        mid_price: usize,
+    pub fn depth_generate_geometric_brownian_motion_downward_trend(
+        &self,
+        exchanges: u8,
+        tick: f64,
+        s_0: f64,
+        dt: f64,
+        spread: f64,
+        length: usize,
+        drift: f64,
+        diffusion: f64,
     ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
-        let mut asks: Vec<DepthUpdate> = vec![];
-        let mut bids: Vec<DepthUpdate> = vec![];
-        let mut current_level: f64;
-        for i in 0..exchange_num {
-            for j in mid_price..mid_price + depth * 2 {
-                let mut depth_update = DepthUpdate::default();
-                depth_update.k = 0;
-                depth_update.p = j as f64; // update this
-                depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
-                asks.push(depth_update);
+        let mut rng = rand::thread_rng();
+        let dist = Normal::new(0.0, 1.0).unwrap();
+        let depth_update_asks_0 = DepthUpdate {
+            k: 0,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let depth_update_bids_0 = DepthUpdate {
+            k: 1,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let mut asks = Vec::<DepthUpdate>::with_capacity(length);
+        let mut bids = Vec::<DepthUpdate>::with_capacity(length);
+        let mut price_diffs = Vec::<f64>::with_capacity(length);
+        let mut price_levels = Vec::<f64>::with_capacity(length);
+        price_diffs.push(tick);
+        price_levels.push(s_0);
+        asks.push(depth_update_asks_0);
+        bids.push(depth_update_bids_0);
+        let drift_factor = 0.1 + drift * dt;
+        let diffusion_factor = diffusion * dt.sqrt();
+        for idx in 1..length {
+            let price_diff = drift_factor + diffusion_factor * dist.sample(&mut rng);
+            let price_current = price_levels[idx - 1] - price_diffs[idx - 1];
+            price_levels.push(price_current);
+            price_diffs.push(price_diff);
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                })
             }
-        }
-        for i in 0..exchange_num {
-            for j in mid_price..mid_price - depth {
-                let mut depth_update = DepthUpdate::default();
-                depth_update.k = 1;
-                depth_update.p = j as f64;
-                depth_update.q = 1 as f64;
-                depth_update.l = i as u8;
-                bids.push(depth_update);
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                })
             }
         }
         (asks, bids)
     }
-}
-
-fn round(x: f64, decimals: u32) -> f64 {
-    let y = 10i64.pow(decimals) as f64;
-    (x * y).round() / y
+    pub fn depth_generate_oscillation(
+        &self,
+        exchanges: u8,
+        tick: f64,
+        s_0: f64,
+        dt: f64,
+        spread: f64,
+        length: usize,
+        drift: f64,
+        diffusion: f64,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut rng = rand::thread_rng();
+        let dist = Normal::new(0.0, 1.0).unwrap();
+        let depth_update_asks_0 = DepthUpdate {
+            k: 0,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let depth_update_bids_0 = DepthUpdate {
+            k: 1,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let mut asks = Vec::<DepthUpdate>::with_capacity(length);
+        let mut bids = Vec::<DepthUpdate>::with_capacity(length);
+        let mut price_diffs = Vec::<f64>::with_capacity(length);
+        let mut price_levels = Vec::<f64>::with_capacity(length);
+        price_diffs.push(tick);
+        price_levels.push(s_0);
+        asks.push(depth_update_asks_0);
+        bids.push(depth_update_bids_0);
+        let drift_factor = 0.1 + drift * dt;
+        let diffusion_factor = diffusion * dt.sqrt();
+        for idx in 1..length {
+            let price_diff = drift_factor + diffusion_factor * dist.sample(&mut rng);
+            let price_current = price_levels[idx - 1] - price_diffs[idx - 1];
+            price_levels.push(price_current);
+            price_diffs.push(price_diff);
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current),
+                    q: 30.0,
+                    l: i,
+                })
+            }
+            for i in 1..=exchanges {
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 1,
+                    p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
+                    q: -30.0,
+                    l: i,
+                })
+            }
+        }
+        (asks, bids)
+    }
 }
 
 fn round_to_hundreth(num: f64) -> f64 {
