@@ -249,6 +249,21 @@ impl DepthMessageGenerator {
                     l: i,
                 })
             }
+            for i in 1..=exchanges {
+                floats.push(price_level);
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: price_level,
+                    q: -30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 0,
+                    p: price_level - spread,
+                    q: -30.0,
+                    l: i,
+                })
+            }
         }
         (asks, bids)
     }
