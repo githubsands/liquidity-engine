@@ -577,6 +577,8 @@ name = "depth-generator"
 version = "0.2.0"
 dependencies = [
  "distribution",
+ "itertool",
+ "itertools 0.11.0",
  "market-objects",
  "rand",
  "rand_distr",
@@ -715,7 +717,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "itertools",
+ "itertools 0.10.5",
  "market-objects",
  "native-tls",
  "oneshot",
@@ -1242,10 +1244,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616cde7c720bb2bb5824a224687d8f77bfd38922027f01d825cd7453be5099fb"
 
 [[package]]
+name = "itertool"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6c4a04718e2694530b5cc60e315975fe7e684288b306efd446780b6eedda49"
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
