@@ -200,6 +200,58 @@ impl DepthMessageGenerator {
         }
         (asks, bids)
     }
+    pub fn depth_generate_geometric_brownian_motion(
+        exchanges: u8,
+        s_0: f64,
+        dt: f64,
+        spread: f64,
+        length: usize,
+        drift: f64,
+        diffusion: f64,
+    ) -> (Vec<DepthUpdate>, Vec<DepthUpdate>) {
+        let mut rng = rand::thread_rng();
+        let dist = Normal::new(0.0, 1.0).unwrap();
+        let depth_update_asks_0 = DepthUpdate {
+            k: 0,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+        let depth_update_bids_0 = DepthUpdate {
+            k: 1,
+            p: s_0,
+            q: 30.0,
+            l: 1,
+        };
+
+        let mut asks = Vec::<DepthUpdate>::with_capacity(length);
+        let mut bids = Vec::<DepthUpdate>::with_capacity(length);
+        let mut floats = Vec::<f64>::with_capacity(length);
+        asks.push(depth_update_asks_0);
+        bids.push(depth_update_bids_0);
+        let drift_factor = 1.0 + drift * dt;
+        let diffusion_factor = diffusion * dt.sqrt();
+        for idx in 1..length {
+            let rv = drift_factor + diffusion_factor * dist.sample(&mut rng);
+            let price_level: f64 = rv * floats[idx - 1];
+            for i in 1..=exchanges {
+                floats.push(price_level);
+                asks.push(DepthUpdate {
+                    k: 0,
+                    p: price_level,
+                    q: 30.0,
+                    l: i,
+                });
+                bids.push(DepthUpdate {
+                    k: 0,
+                    p: price_level - spread,
+                    q: 30.0,
+                    l: i,
+                })
+            }
+        }
+        (asks, bids)
+    }
 }
 
 fn round(x: f64, decimals: u32) -> f64 {
