@@ -485,6 +485,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb58b6451e8c2a812ad979ed1d83378caa5e927eef2622017a45f251457c2c9d"
 
 [[package]]
+name = "const_env"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e9e4f72c6e3398ca6da372abd9affd8f89781fe728869bbf986206e9af9627e"
+dependencies = [
+ "const_env_impl",
+]
+
+[[package]]
+name = "const_env_impl"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a4f51209740b5e1589e702b3044cdd4562cef41b6da404904192ffffb852d62"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -757,6 +777,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "envtime"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "620b4ea431f4a7ee0c5262a19cb2c4ee2f874b582a4875bdec0909c6070828e9"
+dependencies = [
+ "quote",
+ "syn 2.0.23",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,19 +929,6 @@ name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
-
-[[package]]
-name = "flume"
-version = "0.10.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1657b4441c3403d9f7b3409e47575237dac27b1b5726df654a6ecbf92f0f7577"
-dependencies = [
- "futures-core",
- "futures-sink",
- "nanorand",
- "pin-project",
- "spin",
-]
 
 [[package]]
 name = "fnv"
@@ -1111,10 +1128,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be4136b2a15dd319360be1c07d9933517ccf0be8f16bf62a3bee4f0d618df427"
 dependencies = [
  "cfg-if 1.0.0",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1704,15 +1719,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
-name = "nanorand"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
-dependencies = [
- "getrandom",
-]
-
-[[package]]
 name = "native-tls"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1869,15 +1875,17 @@ dependencies = [
  "async-trait",
  "bounded-vec-deque",
  "config",
+ "const_env",
  "crossbeam-channel",
  "depth-generator",
  "env_logger",
+ "envtime",
  "fixed-vec-deque",
- "flume",
  "futures 0.3.28",
  "internal-objects",
  "io-context",
  "itertools 0.10.5",
+ "lazy_static",
  "libmath",
  "market-objects",
  "ordered-float",
@@ -2806,9 +2814,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-dependencies = [
- "lock_api 0.4.10",
-]
 
 [[package]]
 name = "static_assertions"
