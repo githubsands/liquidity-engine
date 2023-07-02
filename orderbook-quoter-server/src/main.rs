@@ -16,7 +16,7 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
 use tokio::sync::broadcast::{channel, Sender};
-use tokio::sync::mpsc::channel as mpsc_channel;
+use tokio::sync::mpsc::{channel as mpsc_channel, Sender as TokioSender};
 
 use internal_objects::Quote;
 use tokio_stream::wrappers::ReceiverStream;
@@ -64,44 +64,45 @@ fn main() {
     info!("config loaded succesfully");
 
     let mut ctx = Context::background();
-    let res = orderbook_quoter_server(&ctx, config_file.unwrap());
+    let res = orderbook_quoter_server(config_file.unwrap());
     match res {
         Ok(_) => info!("shutting down orderbook_quoter_server"),
         Err(error) => error!("failed to run orderbook quoter server {}", error),
     }
 }
 
-fn orderbook_quoter_server(ctx: &Context, config: Config) -> Result<(), Box<dyn Error>> {
+fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let core_ids = core_affinity::get_core_ids().unwrap();
+    let mut ctx = Context::background();
     let cancel_ctx = ctx.add_cancel_signal();
     let parent_ctx = ctx.freeze();
     let process_depths_ctx = Context::create_child(&parent_ctx);
     let package_deals_ctx = Context::create_child(&parent_ctx);
+    let (deal_producer, deal_consumer) = mpsc_channel(10);
 
     info!("starting orderbook-quoter-server");
 
     let (snapshot_depth_producer, snapshot_depth_consumer) = watchChannel(());
-    let (orderbook, depth_producer) = OrderBook::new(config.orderbook);
-    let orderbook = Arc::new(Box::new(orderbook));
+    let (mut orderbook, depth_producer) = OrderBook::new(deal_producer, &config.orderbook);
+    let mut orderbook = Box::new(orderbook);
 
     let orderbook_depth_processor_core = core_ids[0];
-    let orderbook_clone = orderbook.clone();
+    let mut orderbook_clone = orderbook.clone();
     thread::spawn(move || {
-        _ = orderbook_clone.process_all_depths(&package_deals_ctx);
+        _ = orderbook_clone.process_all_depths(&process_depths_ctx);
         let core_id = core_affinity::set_for_current(orderbook_depth_processor_core);
     });
 
     let orderbook_package_deals_core = core_ids[1];
-    let orderbook_clone = orderbook.clone();
+    let mut orderbook_clone = orderbook.clone();
     thread::spawn(move || {
         _ = orderbook_clone.package_deals(&package_deals_ctx);
         let core_id = core_affinity::set_for_current(orderbook_package_deals_core);
     });
 
     let io_grpc_core = core_ids[2];
-    let config = config.clone();
     thread::spawn(move || {
-        let mut async_grpc_io_rt = Builder::new_current_thread()
+        let async_grpc_io_rt = Builder::new_current_thread()
             .enable_io()
             .enable_time()
             .thread_name("grpc io")
@@ -121,6 +122,7 @@ fn orderbook_quoter_server(ctx: &Context, config: Config) -> Result<(), Box<dyn 
         });
     });
 
+    let config = config.clone();
     let io_ws_core = core_ids[3];
     let depth_producer = depth_producer.clone();
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();

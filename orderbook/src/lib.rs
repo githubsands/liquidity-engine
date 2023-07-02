@@ -28,7 +28,7 @@ use tracing::{debug, warn};
 
 use io_context::Context;
 
-pub struct AtomicMap<K, V>
+struct AtomicMap<K, V>
 where
     K: Hash + Eq,
 {
@@ -39,19 +39,19 @@ unsafe impl<K: Hash + Eq + Send, V: Send> Send for AtomicMap<K, V> {}
 unsafe impl<K: Hash + Eq + Sync, V: Sync> Sync for AtomicMap<K, V> {}
 
 impl<K: Hash + Eq, V> AtomicMap<K, V> {
-    pub fn new() -> Self {
+    fn new() -> Self {
         AtomicMap {
             data: UnsafeCell::new(FxHashMap::default()),
         }
     }
 
-    pub fn insert(&self, key: K, value: V) {
+    fn insert(&self, key: K, value: V) {
         unsafe {
             (*self.data.get()).insert(key, value);
         }
     }
 
-    pub fn get(&self, key: &K) -> Option<&V> {
+    fn get(&self, key: &K) -> Option<&V> {
         let result;
         unsafe {
             result = (*self.data.get()).get(key);
@@ -59,7 +59,7 @@ impl<K: Hash + Eq, V> AtomicMap<K, V> {
         result
     }
 
-    pub fn get_mut(&self, key: &K) -> Option<&mut V> {
+    fn get_mut(&self, key: &K) -> Option<&mut V> {
         let result;
         unsafe {
             result = (*self.data.get()).get_mut(key);
@@ -110,17 +110,17 @@ impl<T: Copy + Clone + Send + Sync> Clone for AtomicVal<T> {
 }
 
 impl AtomicVal<f64> {
-    pub fn new(current_best: f64) -> Self {
+    fn new(current_best: f64) -> Self {
         AtomicVal {
             data: Cell::new(current_best),
         }
     }
 
-    pub fn set(&self, val: f64) {
+    fn set(&self, val: f64) {
         self.data.set(val)
     }
 
-    pub fn get(&self) -> f64 {
+    fn get(&self) -> f64 {
         self.data.get()
     }
 }
@@ -132,7 +132,7 @@ struct Level<LiquidityNode> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct LiquidityNode {
+struct LiquidityNode {
     q: f64,
     l: u8,
 }
@@ -150,7 +150,7 @@ impl Level<LiquidityNode> {
 }
 
 #[derive(Clone)]
-struct OrderBook {
+pub struct OrderBook {
     write_lock: Arc<AtomicBool>,
     read_lock: Arc<AtomicBool>,
 
@@ -184,7 +184,7 @@ fn round(num: f64, place: f64) -> f64 {
 impl OrderBook {
     pub fn new(
         deal_producer: TokioSender<Deals>,
-        config: OrderbookConfig,
+        config: &OrderbookConfig,
     ) -> (OrderBook, Sender<DepthUpdate>) {
         let (asks, bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
             OrderBook::build_orderbook(
@@ -192,7 +192,7 @@ impl OrderBook {
                 config.mid_price as f64,
                 config.depth as f64,
             );
-        let (ring_buffer, depth_producers) = RingBuffer::new(config.ring_buffer);
+        let (ring_buffer, depth_producers) = RingBuffer::new(&config.ring_buffer);
         let orderbook: OrderBook = OrderBook {
             write_lock: Arc::new(AtomicBool::new(false)),
             read_lock: Arc::new(AtomicBool::new(false)),
@@ -700,7 +700,7 @@ impl OrderBook {
 
     #[inline]
     // TODO: Get rid of heap allocations here
-    fn package_deals(&mut self, ctx: &Context) -> Result<Deals, ErrorHotPath> {
+    pub fn package_deals(&mut self, ctx: &Context) -> Result<Deals, ErrorHotPath> {
         loop {
             if let Some(reason) = ctx.done() {
                 debug!("context was triggered: {}", reason);
