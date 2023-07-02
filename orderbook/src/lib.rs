@@ -11,6 +11,9 @@ use tokio::sync::watch::{
 use std::cell::Cell;
 use std::thread;
 
+use config::{read_yaml_config, Config};
+use std::path::PathBuf;
+
 use std::cell::UnsafeCell;
 use std::hash::Hash;
 use std::ops::{Index, IndexMut};
@@ -27,6 +30,9 @@ use ring_buffer::RingBuffer;
 use tracing::{debug, warn};
 
 use io_context::Context;
+
+use lazy_static::lazy_static;
+use std::env::var;
 
 struct AtomicMap<K, V>
 where
@@ -125,29 +131,41 @@ impl AtomicVal<f64> {
     }
 }
 
-#[derive(Clone)]
-struct Level<LiquidityNode> {
-    price: f64,
-    deque: [LiquidityNode; 2],
-}
-
 #[derive(Copy, Clone, Debug)]
 struct LiquidityNode {
     q: f64,
     l: u8,
 }
 
-impl Level<LiquidityNode> {
-    fn new(price_level: f64) -> Self {
-        Level {
-            price: price_level,
-            deque: [
-                LiquidityNode { q: 0.0, l: 1 },
-                LiquidityNode { q: 0.0, l: 2 },
-            ],
+macro_rules! new_level {
+    ($exchanges:expr) => {
+        #[derive(Clone)]
+        struct Level<LiquidityNode> {
+            price: f64,
+            deque: [LiquidityNode; $exchanges],
         }
-    }
+
+        impl Level<LiquidityNode> {
+            fn new(price_level: f64) -> Self {
+                let mut level = Level {
+                    price: price_level,
+                    deque: [LiquidityNode { q: 0.0, l: 0 }; $exchanges],
+                };
+
+                for i in 0..$exchanges {
+                    level.deque[i] = LiquidityNode {
+                        q: 0.0,
+                        l: i as u8 + 1,
+                    }
+                }
+
+                level
+            }
+        }
+    };
 }
+
+new_level!(3); // TODO: the exchange count needs to come in from the config file
 
 #[derive(Clone)]
 pub struct OrderBook {
@@ -852,7 +870,7 @@ mod tests {
             let depth: f64 = 5000.0;
             let (asks, bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
                 OrderBook::build_orderbook(tick_size, mid_level, depth);
-            let (ring_buffer, depth_producer) = RingBuffer::new(RingBufferConfig {
+            let (ring_buffer, depth_producer) = RingBuffer::new(&RingBufferConfig {
                 ring_buffer_size: 3000000,
                 channel_buffer_size: 30000000, // NOTE BACK PRESSURE HERE IS SIGNIFICANT
             });
