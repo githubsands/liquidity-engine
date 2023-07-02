@@ -1913,6 +1913,8 @@ dependencies = [
  "exchange-controller",
  "futures 0.3.28",
  "internal-objects",
+ "io-context",
+ "orderbook",
  "prost",
  "serde",
  "tokio 1.29.1",

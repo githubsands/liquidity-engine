@@ -44,7 +44,7 @@ pub struct RingBuffer {
 }
 
 impl RingBuffer {
-    pub fn new(ring_buffer_config: RingBufferConfig) -> (Self, Sender<DepthUpdate>) {
+    pub fn new(ring_buffer_config: &RingBufferConfig) -> (Self, Sender<DepthUpdate>) {
         let (producer, consumer) = bounded::<DepthUpdate>(ring_buffer_config.channel_buffer_size);
         let rb = RingBuffer {
             size: ring_buffer_config.ring_buffer_size,
