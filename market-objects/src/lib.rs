@@ -5,12 +5,13 @@ use std::fmt::{Display, Error as ErrorFMT, Formatter};
 
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
 // Order defines an order object:
 // k: 0 ask, 1 bid
 // p: price or level
 // q: quantity
 // l: location: 1 binance, 2 binance_usa, 3 bybit
+// s: snapshot update vs websocket update
 pub struct DepthUpdate {
     pub k: u8,
     pub p: f64,

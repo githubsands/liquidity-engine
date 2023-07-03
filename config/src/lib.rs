@@ -15,9 +15,12 @@ pub struct Config {
 #[derive(Debug, Deserialize, Clone)]
 pub struct OrderbookConfig {
     pub ring_buffer: RingBufferConfig,
-    pub asset_price_floor: f64,
-    pub asset_price_ceiling: f64,
     pub price_point_array_size: usize,
+    pub exchange_count: i64,
+    pub depth: i64,
+    pub mid_price: i64,
+    pub tick_size: f64,
+    pub ticker: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -1,3 +1,9 @@
+[package]
+name = "keyrock-main"
+version = "0.1.0"
+edition = "2021"
+
+
 [workspace]
 members = [
     "orderbook-quoter-server",
@@ -7,4 +13,13 @@ members = [
     "testing/exchange-stubs",
     "internal-objects",
     "market-objects",
+    "orderbook",
 ]
+
+[dependencies]
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+prost = "0.11"
+
+
+[build-dependencies]
+tonic-build = { version = "0.9.2", features = ["prost"] }
