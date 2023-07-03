@@ -91,20 +91,23 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 
     let orderbook_depth_processor_core = core_ids[0];
     let mut orderbook_clone = orderbook.clone();
-    thread::spawn(move || {
+    let t1 = thread::spawn(move || {
+        info!("starting orderbook depth processor");
         _ = orderbook_clone.process_all_depths(&process_depths_ctx);
         let _ = core_affinity::set_for_current(orderbook_depth_processor_core);
     });
 
     let orderbook_package_deals_core = core_ids[1];
     let mut orderbook_clone = orderbook.clone();
-    thread::spawn(move || {
+    let t2 = thread::spawn(move || {
+        info!("starting orderbook deal packer");
         _ = orderbook_clone.package_deals(&package_deals_ctx);
         let _ = core_affinity::set_for_current(orderbook_package_deals_core);
     });
 
     let io_grpc_core = core_ids[2];
-    thread::spawn(move || {
+    let t3 = thread::spawn(move || {
+        info!("starting ws io");
         let async_grpc_io_rt = Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -130,7 +133,8 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let depth_producer = depth_producer.clone();
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();
     let config = config.clone();
-    thread::spawn(move || {
+    let t4 = thread::spawn(move || {
+        info!("starting grpc io");
         let async_ws_io_rt = Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -150,6 +154,11 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         });
         async_ws_io_rt.block_on(local);
     });
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    info!("made it here");
 
     Ok(())
 }

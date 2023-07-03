@@ -11,6 +11,7 @@ members = [
     "exchange-controller",
     "testing/depth-generator",
     "testing/exchange-stubs",
+    "testing/exchange-server",
     "internal-objects",
     "market-objects",
     "orderbook",

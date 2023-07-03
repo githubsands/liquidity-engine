@@ -51,8 +51,6 @@ pin_project! {
 
         pub snapshot_trigger: Option<watchReceiver<()>>,
 
-        orderbook_subscription_message: String,
-
         #[pin]
         buffer: Vec<DepthUpdate>,
         #[pin]
@@ -90,10 +88,6 @@ impl ExchangeStream {
             ws_subscribe: false,
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
-            orderbook_subscription_message: jsonify(
-                &exchange_config.orderbook_subscription_message,
-            )
-            .unwrap(),
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
             buffer: Vec::with_capacity(exchange_config.buffer_size),
             ws_connection_orderbook_reader: None,
