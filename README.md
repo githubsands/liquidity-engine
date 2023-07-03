@@ -29,7 +29,7 @@ Provides a controlling interface to all exchange streams.
 
 Future work: 
 
-(1) Handle more then just two exchanges
+(1) Handle more then just two exchanges (currently the orderbook can be configured for N exchanges but not the exchange controller)
 
 (2) Needs to handle orderbook reset and orderbook snapshot
 retriggering with correct sequencing, and websocket reconnection.
@@ -51,6 +51,34 @@ Future work:
 (2) Reduce dynamic memory allocations
 
 (3) Possibly run ask and bid reader threads in their own threads rather
+then having both readers run on the same core (a threadpool also would be another lower dev cost solution here)
+
+(4) Use a decimals or another solution over floats for quantities.
+
+(5) Use a decimals or another solution over floats for price levels.
+
+(6) Possibly more performant atomic memory ordering 
+
+### Testing
+
+#### 1. Depth Generator
+
+Generates depths in many different sequences.
+
+#### 2. Exchange Stubs
+
+Provides both HTTP and websocket endpoints for depths. Leverages depth generator.
+
+#### 3. Exchange Server
+
+Dockerized exchange stub for full integration testing.
+
+
+(1) Required state required is rebuilding the orderbook if a ExchangeStream websocket connection fails. 
+
+(2) Reduce dynamic memory allocations
+
+(3) Possibly run ask and bid reader threads to in their own threads rather
 then having both readers run on the same core (a threadpool also would be another lower dev cost solution here)
 
 (4) Use a decimals or another solution over floats for quantities.

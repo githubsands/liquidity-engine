@@ -5,8 +5,8 @@ exchanges:
     exchange_name: 2
     snapshot_enabled: true
     http_client: true
-    snapshot_uri: "https://api.binance.us/api/v3/depth?symbol=USDTBTC&limit=5000"
-    ws_uri: "wss://stream.binance.us:9443"
+    snapshot_uri: "http://localhost:8081/depths"
+    ws_uri: "wss://localhost:8080"
     depth: 5000
     buffer_size: 2048
     watched_pair: "USDT/BTC"
@@ -15,8 +15,8 @@ exchanges:
     exchange_name: 2
     snapshot_enabled: true
     http_client: true
-    snapshot_uri: "https://api.binance.us/api/v3/depth?symbol=USDTBTC&limit=5000"
-    ws_uri: "wss://stream.binance.us:9443"
+    snapshot_uri: "http://localhost:8083/depths"
+    ws_uri: "wss://localhost:8082"
     depth: 5000
     buffer_size: 2048
     watched_pair: "USDT/BTC"
@@ -30,4 +30,4 @@ orderbook:
     ring_buffer_size: 1024
     channel_buffer_size: 512
 grpc_server:
-  host_uri: "127.0.0.1:9090"
+  host_uri: "127.0.0.1:5000"

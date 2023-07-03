@@ -1,0 +1,22 @@
+[package]
+name = "exchange-server"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = [
+    "depth-generator",
+    "exchange-stubs",
+    "market-objects",
+]
+
+[dependencies]
+exchange-stubs = { path = "exchange-stubs"}
+depth-generator = { path = "depth-generator"}
+market-objects = { path = "market-objects"}
+
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+[[bin]]
+name = "exchange-server"
+path = "src/main.rs"

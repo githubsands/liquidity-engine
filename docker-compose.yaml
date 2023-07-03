@@ -1,0 +1,38 @@
+version: '3'
+services:
+  exchange-server-two:
+    build:
+      context: ./testing/exchange-server
+      dockerfile: Dockerfile
+    environment:
+      - WS_PORT=8080
+      - HTTP_PORT=8081
+  exchange-server-one:
+    build:
+      context: ./testing/exchange-server
+      dockerfile: Dockerfile
+    environment:
+      - WS_PORT=8082
+      - HTTP_PORT=8083
+  orderbook-quoter-server:
+    depends_on: 
+      - exchange-server-one
+      - exchange-server-two
+    build:
+      context: ./orderbook-quoter-server
+      dockerfile: Dockerfile
+    environment:
+      - CONFIG_PATH=/etc/config.json
+    volumes:
+      - ./data:/etc/config.json
+    command: ["./orderbook-quoter-server", "--config", "/etc/integration-testing-config.json"]
+  market-maker:
+    environment: 
+      - ORDERBOOK_QUOTER_SERVER_URI="127.0.0.1:5000"
+      - EXCHANGE_SERVER_1_URI="wss://127.0.0.1:8080"
+      - EXCHANGE_SERVER_2_URI="wss://127.0.0.1:8082"
+    depends_on:
+      - orderbook-quoter-server
+    build:
+      context: ./market-maker
+      dockerfile: Dockerfile

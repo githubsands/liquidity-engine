@@ -515,11 +515,11 @@ impl OrderBook {
                 if depth_update.p < self.best_deal_asks_level_price.get()
                     && depth_update.q.is_sign_negative()
                     && depth_update.l as f64 == self.best_deal_asks_level_location.get()
-                    && self.best_deal_asks_level_quantity.get() + depth_update.q < 0.0
+                    && self.best_deal_asks_level_quantity.get() + depth_update.q <= 0.0
                 {
                     let mut first_liquid_node = true;
+                    let mut current_level = depth_update.p;
                     loop {
-                        let mut current_level = depth_update.p;
                         let current_level_asks = self.asks.get(&OrderedFloat(depth_update.p));
                         if first_liquid_node {
                             let mut liquid_asks_levels = current_level_asks
@@ -586,11 +586,11 @@ impl OrderBook {
                 if depth_update.p > self.best_deal_asks_level_price.get()
                     && depth_update.q.is_sign_negative()
                     && depth_update.l as f64 == self.best_deal_asks_level_location.get()
-                    && self.best_deal_bids_level_quantity.get() + depth_update.q < 0.0
+                    && self.best_deal_bids_level_quantity.get() + depth_update.q <= 0.0
                 {
                     let mut first_liquid_node = true;
+                    let mut current_level = depth_update.p;
                     loop {
-                        let mut current_level = depth_update.p;
                         let current_level_asks = self.asks.get(&OrderedFloat(depth_update.p));
                         if first_liquid_node {
                             // ignore the first node sense we already know it has 0 liquidity
@@ -759,9 +759,9 @@ impl OrderBook {
             if current_level < self.max_ask_level + self.tick_size {
                 let current_level_asks = self.asks.get(&OrderedFloat(current_level));
                 if current_level_asks.is_none() {
-                    current_level = round(current_level + self.tick_size, 100.0);
-                    warn!("level {} does not exist in the ASKS book", current_level);
-                    continue;
+                    warn!("level {} does not exist in the BIDS book", current_level);
+                    // TODO: Create its own error for the level not being allocated
+                    return Err(ErrorHotPath::OrderBookMaxTraversedReached);
                 }
                 let mut liquid_asks_levels = current_level_asks
                     .unwrap()
@@ -805,8 +805,8 @@ impl OrderBook {
                 let current_level_bids = self.bids.get(&OrderedFloat(current_level));
                 if current_level_bids.is_none() {
                     warn!("level {} does not exist in the BIDS book", current_level);
-                    current_level = round(current_level - self.tick_size, 100.0);
-                    continue;
+                    // TODO: Create its own error for the level not being allocated
+                    return Err(ErrorHotPath::OrderBookMaxTraversedReached);
                 }
                 let mut liquid_bids_levels = current_level_bids
                     .unwrap()
