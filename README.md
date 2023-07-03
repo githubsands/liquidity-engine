@@ -11,7 +11,7 @@ are provided through a grpc server endpoint
 IO components, ExchangeStreams, and Quote GRPC Server, are ran on seperate tokio runtimes in their own
 pinned threads.
 
-Orderbook is ran with multiplie threads. One to writing to the orderbook the others for reading the orderbook
+Orderbook is ran with multiplie threads. One for writing to the orderbook the others for reading the orderbook
 
 ## Components 
 
@@ -50,14 +50,29 @@ Future work:
 
 (2) Reduce dynamic memory allocations
 
-(3) Possibly run ask and bid reader threads to in their own threads rather
+(3) Possibly run ask and bid reader threads in their own threads rather
 then having both readers run on the same core (a threadpool also would be another lower dev cost solution here)
 
-(4) Use a decimals or another solutiuon over floats for quantities.
+(4) Use a decimals or another solution over floats for quantities.
 
-(5) Use a decimals or another solutiuon over floats for price levels.
+(5) Use a decimals or another solution over floats for price levels.
 
 (6) Possibly more performant atomic memory ordering 
+
+### Testing
+
+#### 1. Depth Generator
+
+Generates depths in many different sequences.
+
+#### 2. Exchange Stubs
+
+Provides both HTTP and websocket endpoints for depths. Leverages depth generator.
+
+#### 3. Exchange Server
+
+Dockerized exchange stub for full integration testing.
+
 
 ### Quote GRPC Server
 
