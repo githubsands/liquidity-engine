@@ -87,7 +87,7 @@ impl ExchangeServer {
         let http_route = warp::path("depths").map(|| {
             let mut depth_generator = DepthMessageGenerator::default();
             let (asks, bids) =
-                depth_generator.depth_balanced_orderbook(EXCHANGE_LOCATIONS as usize, 40, 27000);
+                depth_generator.depth_balanced_orderbook(EXCHANGE_LOCATIONS as usize, 40, 2700);
             let binance_asks: Vec<BinanceDepthUpdate> = asks
                 .into_iter()
                 .map(|depth| BinanceDepthUpdate {

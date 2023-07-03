@@ -840,6 +840,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "exchange-server"
+version = "0.1.0"
+dependencies = [
+ "exchange-stubs",
+ "tokio 1.29.1",
+]
+
+[[package]]
 name = "exchange-stream"
 version = "0.1.0"
 dependencies = [
