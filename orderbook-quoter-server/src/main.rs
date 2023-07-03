@@ -16,9 +16,10 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
 use tokio::sync::broadcast::{channel, Sender};
-use tokio::sync::mpsc::{channel as mpsc_channel, Sender as TokioSender};
+use tokio::sync::mpsc::{
+    channel as mpsc_channel, Receiver as TokioReceiver, Sender as TokioSender,
+};
 
-use internal_objects::Quote;
 use tokio_stream::wrappers::ReceiverStream;
 
 use pb::{QuoterRequest, QuoterResponse};
@@ -38,13 +39,14 @@ use config::{read_yaml_config, Config};
 use tracing::{error, info};
 use tracing_subscriber;
 
-use crossbeam_channel::{bounded, Receiver as syncReceiver, Sender as syncChannel};
+use internal_objects::Deals;
+
 use exchange_controller::ExchangeController;
 use orderbook::OrderBook;
 
-use tokio::sync::watch::{
-    channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
-};
+use tokio::sync::watch::channel as watchChannel;
+
+use tokio::sync::broadcast;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -63,7 +65,6 @@ fn main() {
     let config_file = read_yaml_config(file);
     info!("config loaded succesfully");
 
-    let mut ctx = Context::background();
     let res = orderbook_quoter_server(config_file.unwrap());
     match res {
         Ok(_) => info!("shutting down orderbook_quoter_server"),
@@ -74,7 +75,8 @@ fn main() {
 fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let core_ids = core_affinity::get_core_ids().unwrap();
     let mut ctx = Context::background();
-    let cancel_ctx = ctx.add_cancel_signal();
+    // TODO: Handle the context
+    let _ = ctx.add_cancel_signal();
     let parent_ctx = ctx.freeze();
     let process_depths_ctx = Context::create_child(&parent_ctx);
     let package_deals_ctx = Context::create_child(&parent_ctx);
@@ -82,22 +84,23 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 
     info!("starting orderbook-quoter-server");
 
-    let (snapshot_depth_producer, snapshot_depth_consumer) = watchChannel(());
-    let (mut orderbook, depth_producer) = OrderBook::new(deal_producer, &config.orderbook);
-    let mut orderbook = Box::new(orderbook);
+    // TODO: Handle the snapshot_depth_producer
+    let (_, snapshot_depth_consumer) = watchChannel(());
+    let (orderbook, depth_producer) = OrderBook::new(deal_producer, &config.orderbook);
+    let orderbook = Box::new(orderbook);
 
     let orderbook_depth_processor_core = core_ids[0];
     let mut orderbook_clone = orderbook.clone();
     thread::spawn(move || {
         _ = orderbook_clone.process_all_depths(&process_depths_ctx);
-        let core_id = core_affinity::set_for_current(orderbook_depth_processor_core);
+        let _ = core_affinity::set_for_current(orderbook_depth_processor_core);
     });
 
     let orderbook_package_deals_core = core_ids[1];
     let mut orderbook_clone = orderbook.clone();
     thread::spawn(move || {
         _ = orderbook_clone.package_deals(&package_deals_ctx);
-        let core_id = core_affinity::set_for_current(orderbook_package_deals_core);
+        let _ = core_affinity::set_for_current(orderbook_package_deals_core);
     });
 
     let io_grpc_core = core_ids[2];
@@ -109,10 +112,10 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .worker_threads(1)
             .build()
             .unwrap();
-        let core_id = core_affinity::set_for_current(io_grpc_core);
+        let _ = core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
         grpc_io_handler.spawn(async {
-            let (server, quote_producer) = OrderBookQuoterServer::new();
+            let server = OrderBookQuoterServer::new(deal_consumer);
             Server::builder()
                 .add_service(QuoterServer::new(server)) // pb generated QuotedServer consumes our
                 // type OrderBookQuoterServer
@@ -128,7 +131,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();
     let config = config.clone();
     thread::spawn(move || {
-        let mut async_ws_io_rt = Builder::new_current_thread()
+        let async_ws_io_rt = Builder::new_current_thread()
             .enable_io()
             .enable_time()
             .thread_name("websocket io")
@@ -136,7 +139,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .build()
             .unwrap();
         let local = LocalSet::new();
-        let core_id = core_affinity::set_for_current(io_ws_core);
+        let _ = core_affinity::set_for_current(io_ws_core);
         local.spawn_local(async move {
             let mut exchange_controller =
                 ExchangeController::new(&config.exchanges, depth_producer, snapshot_depth_consumer)
@@ -154,21 +157,46 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OrderBookQuoterServer {
-    pub quote_producer: Arc<Sender<Quote>>,
+    deals_consumer: TokioReceiver<Deals>,
+    quote_broadcaster: tokio::sync::broadcast::Sender<QuoterResponse>,
 }
 
 impl OrderBookQuoterServer {
-    pub fn new() -> (Self, Sender<Quote>) {
-        let (quote_producer, _quote_consumer) = channel::<Quote>(16);
-        let quote_producer_arc = Arc::new(quote_producer.clone());
-        (
-            OrderBookQuoterServer {
-                quote_producer: quote_producer_arc,
-            },
-            quote_producer,
-        )
+    pub fn new(deal_receiver: TokioReceiver<Deals>) -> OrderBookQuoterServer {
+        let (tx, _) = broadcast::channel(16);
+        OrderBookQuoterServer {
+            deals_consumer: deal_receiver,
+            quote_broadcaster: tx,
+        }
+    }
+    pub async fn fanout_quotes(&mut self) {
+        while let Ok(deals) = self.deals_consumer.try_recv() {
+            self.quote_broadcaster.send(QuoterResponse {
+                ask_deals: deals
+                    .asks
+                    .into_iter()
+                    .map(|preprocessed_deal| pb::Deal {
+                        location: preprocessed_deal.l as i32,
+                        price: preprocessed_deal.p,
+                        quantity: preprocessed_deal.q,
+                    })
+                    .collect(),
+
+                bid_deals: deals
+                    .bids
+                    .into_iter()
+                    .map(|preprocessed_deal| pb::Deal {
+                        location: preprocessed_deal.l as i32,
+                        price: preprocessed_deal.p,
+                        quantity: preprocessed_deal.q,
+                    })
+                    .collect(),
+
+                spread: (deals.asks[0].p - deals.bids[0].p) as i32,
+            });
+        }
     }
 }
 
@@ -181,61 +209,30 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
         req: Request<QuoterRequest>,
     ) -> QuoterResult<Self::ServerStreamingQuoterStream> {
         println!("\tclient connected from: {:?}", req.remote_addr());
-        let producer = self.quote_producer.clone();
-        let receiver = producer.subscribe();
-        let output_stream = tokio_stream::wrappers::BroadcastStream::new(receiver);
-        let mut quote_grpc_stream =
-            output_stream.map(|upstream_quote_result| match upstream_quote_result {
-                Ok(upstream_quote) => Ok(QuoterResponse {
-                    ask_deals: upstream_quote
-                        .ask_deals
-                        .into_iter()
-                        .map(|preprocessed_deal| pb::Deal {
-                            location: preprocessed_deal.l as i32,
-                            price: preprocessed_deal.p,
-                            quantity: preprocessed_deal.q,
-                        })
-                        .collect(),
-                    bid_deals: upstream_quote
-                        .bid_deals
-                        .into_iter()
-                        .map(|preprocessed_deal| pb::Deal {
-                            location: preprocessed_deal.l as i32,
-                            price: preprocessed_deal.p,
-                            quantity: preprocessed_deal.q,
-                        })
-                        .collect(),
-                    spread: upstream_quote.spread as i32,
-                }),
-                Err(upstream_quote_error) => {
-                    info!("failed");
-                    return Err(upstream_quote_error);
-                }
-            });
+        let consumer = self.quote_broadcaster.subscribe();
+        let (client_response_producer, client_response_consumer) =
+            mpsc_channel::<Result<QuoterResponse, Status>>(1000);
+        let mut quote_stream = tokio_stream::wrappers::BroadcastStream::new(consumer);
+        let output_stream = ReceiverStream::new(client_response_consumer);
+        let input_stream = client_response_producer;
+
         // 1. receive quote from upstream componenets through quote_grpc_stream
         // 2. forward quote to the client
         // 3. receive a quoter response and status back from the client
-        let (client_response_producer, client_response_consumer) = mpsc_channel(1000);
         tokio::spawn(async move {
-            while let Some(broadcast_receiver_result) = quote_grpc_stream.next().await {
+            while let Some(broadcast_receiver_result) = quote_stream.next().await {
                 match broadcast_receiver_result {
-                    Ok(quote) => {
-                        match client_response_producer
-                            .send(Result::<_, Status>::Ok(quote))
-                            .await
-                        {
-                            Ok(_) => {
-                                info!("sending quote to client");
-                            }
-                            Err(_quote) => break,
+                    Ok(quote) => match input_stream.send(Result::<_, Status>::Ok(quote)).await {
+                        Ok(_) => {
+                            info!("sending quote to client");
                         }
-                    }
+                        Err(_quote) => break,
+                    },
                     Err(_) => continue,
                 }
             }
             println!("\tclient disconnected");
         });
-        let output_stream = ReceiverStream::new(client_response_consumer);
         Ok(Response::new(
             Box::pin(output_stream) as Self::ServerStreamingQuoterStream
         ))
