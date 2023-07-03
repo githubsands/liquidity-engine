@@ -92,7 +92,7 @@ impl ExchangeStream {
             buffer: Vec::with_capacity(exchange_config.buffer_size),
             ws_connection_orderbook_reader: None,
             depths_producer: orders_producer,
-            http_client: http_client,
+            http_client,
         };
         Ok(Rc::new(RefCell::new(exchange)))
     }

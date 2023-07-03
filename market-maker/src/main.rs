@@ -108,7 +108,7 @@ impl MarketMaker {
         }
         MarketMaker {
             agent: "market-maker-strategy-tbd".to_string(),
-            exchanges: exchanges,
+            exchanges,
             quote_producer: producer,
             quote_consumer: consumer,
         }

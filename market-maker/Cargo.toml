@@ -13,3 +13,7 @@ futures = "0.3.28"
 tokio-tungstenite = "0.19.0"
 url = "2.3.1"
 futures-util = "0.3.28"
+
+[[bin]]
+name = "market-maker"
+path = "src/main.rs"
