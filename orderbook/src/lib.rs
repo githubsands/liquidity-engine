@@ -1634,9 +1634,10 @@ mod tests {
         // e3: add liquidity at 2700.00 - leaving jump in the orderbook at 2700.01 between 2700.00
         // and 2700.02
         // e4: add liquidity to end of the best 10 deals leaving the quote unchanged
+        // repeat e1-e4 for asks side
         
         // start producing deals through updates.  every update produces a deal
-        let injected_depth_updates_asks: Vec<DepthUpdate> = vec![
+        let injected_depth_updates: Vec<DepthUpdate> = vec![
             DepthUpdate { k: 0, p: 2700.01, q: -42.33, l: 1, s: false}, 
             DepthUpdate { k: 0, p: 2700.01, q: -30.29, l: 2, s: false},         
             DepthUpdate { k: 0, p: 2700.00, q: 99.99, l: 2, s: false},         
@@ -1648,7 +1649,7 @@ mod tests {
         ];
 
         let snapshots: (Vec<DepthUpdate>, Vec<DepthUpdate>) = (injected_depth_snapshots_asks, injected_depth_snapshots_bids);
-        let updates: (Vec<DepthUpdate>, Vec<DepthUpdate>) = (injected_depth_updates_asks, vec![]);
+        let updates: (Vec<DepthUpdate>, Vec<DepthUpdate>) = (injected_depth_updates, vec![]);
 
         let depth_machine_task = tokio::spawn(async move {
             debug!("pushing depth snapshots");
