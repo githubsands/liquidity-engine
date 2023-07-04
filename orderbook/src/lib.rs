@@ -165,7 +165,7 @@ macro_rules! new_level {
     };
 }
 
-new_level!(3); // TODO: the exchange count needs to come in from the config file
+new_level!(N);
 
 #[derive(Clone)]
 pub struct OrderBook {
