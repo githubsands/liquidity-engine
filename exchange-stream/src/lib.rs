@@ -6,11 +6,7 @@ use serde_json::{from_str, to_string as jsonify, Value as JsonValue};
 
 use pin_project_lite::pin_project;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
-use futures_util::sink::SinkExt;
 use itertools::interleave;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
@@ -70,13 +66,12 @@ impl ExchangeStream {
         orders_producer: Sender<DepthUpdate>,
         snapshot_trigger: watchReceiver<()>,
         _http_client_option: bool,
-    ) -> Result<Rc<RefCell<Self>>, ErrorInitialState> {
+    ) -> Result<Self, ErrorInitialState> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
             info!("snapshot is enabled building http client");
             http_client = Some(Client::new());
         }
-        let (snapshot_trigger_tx, snapshot_trigger_rx) = watchChannel(());
         let exchange = ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
@@ -94,7 +89,7 @@ impl ExchangeStream {
             depths_producer: orders_producer,
             http_client,
         };
-        Ok(Rc::new(RefCell::new(exchange)))
+        Ok(exchange)
     }
     pub async fn start(
         &mut self,
@@ -125,7 +120,7 @@ impl ExchangeStream {
         };
     }
 
-    pub async fn run_snapshot(&mut self) {
+    pub async fn run_snapshot(&mut self) -> Result<(), ErrorInitialState> {
         self.buffer_websocket_depths = true;
         let mut success = false;
         while !success {
@@ -142,13 +137,15 @@ impl ExchangeStream {
                     success = true;
                 }
                 Err(pull_error) => {
-                    warn!(
+                    error!(
                         "failed to get websocket depths from exchange {}",
                         pull_error
-                    )
+                    );
+                    return Err(ErrorInitialState::Snapshot(pull_error.to_string()));
                 }
             }
         }
+        Ok(())
     }
 
     pub async fn push_buffered_ws_depths(&mut self) {
@@ -275,8 +272,9 @@ impl ExchangeStream {
             }
         }
     }
-    #[allow(dead_code)]
-    async fn reconnect(&mut self) -> Result<(), ErrorHotPath> {
+    pub async fn reconnect(
+        &mut self,
+    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ErrorHotPath> {
         let config = WebSocketConfig {
             max_send_queue: None,
             max_message_size: None,
@@ -287,16 +285,19 @@ impl ExchangeStream {
             connect_async_with_config(self.websocket_uri.clone(), Some(config), false).await;
         let _ = match ws_conn_result {
             Ok((ws_conn, _)) => {
-                self.ws_connection_orderbook = Some(ws_conn);
-                info!("reconnected to exchange: {}", self.exchange_name)
+                let (sink, stream) = ws_conn.split();
+                self.ws_connection_orderbook_reader = Some(stream);
+                info!(
+                    "connected to exchange {} at {}",
+                    self.exchange_name, self.websocket_uri
+                );
+                return Ok(sink);
             }
-            Err(_) => {
-                return Err(ErrorHotPath::ExchangeWSReconnectError(
-                    "Failed to reconnect to Exchange WS Server".to_string(),
-                ));
+            Err(ws_error) => {
+                error!("failed to connect to exchange {}", self.websocket_uri);
+                return Err(ErrorHotPath::ExchangeWSReconnectError(ws_error.to_string()));
             }
         };
-        Ok(())
     }
 }
 
@@ -350,7 +351,6 @@ impl Stream for ExchangeStream {
                 info!("orderbook buffer success")
             }
         }
-        // TODO: This fails when there is a underlying error. So pass down the websocket error
         let Some(mut orderbooks) = this.ws_connection_orderbook_reader.as_mut().as_pin_mut() else {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream))
@@ -444,7 +444,6 @@ mod tests {
                 watched_pair: String::from(""),
                 buffer_websocket_depths: true,
                 snapshot_trigger: None,
-                orderbook_subscription_message: String::from(""),
                 buffer: Vec::new(),
                 ws_connection_orderbook: None,
                 ws_connection_orderbook_reader: None,

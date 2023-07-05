@@ -47,6 +47,7 @@ use orderbook::OrderBook;
 use tokio::sync::watch::channel as watchChannel;
 
 use tokio::sync::broadcast;
+use tokio_context::context::Context as asyncContext;
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -75,7 +76,7 @@ fn main() {
 fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let core_ids = core_affinity::get_core_ids().unwrap();
     let mut ctx = Context::background();
-    // TODO: Handle the context
+    let (mut asyncCtx, _parent_handle) = asyncContext::new();
     let _ = ctx.add_cancel_signal();
     let parent_ctx = ctx.freeze();
     let process_depths_ctx = Context::create_child(&parent_ctx);
@@ -148,9 +149,22 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             let mut exchange_controller =
                 ExchangeController::new(&config.exchanges, depth_producer, snapshot_depth_consumer)
                     .unwrap();
-            exchange_controller.websocket_connect().await;
-            exchange_controller.subscribe_depths().await;
-            exchange_controller.stream_depths().await;
+            let start_result = exchange_controller.websocket_connect().await;
+            match start_result {
+                Ok(_) => exchange_controller.close_exchanges().await,
+                Err(stream_error) => {
+                    panic!("failed to stream exchanges: {:?}", stream_error);
+                }
+            }
+            let _ = exchange_controller.subscribe_depths().await;
+            let _ = exchange_controller.build_orderbook().await;
+            let stream_result = exchange_controller.run_streams(&mut asyncCtx).await;
+            match stream_result {
+                Ok(_) => exchange_controller.close_exchanges().await,
+                Err(stream_error) => {
+                    panic!("failed to stream exchanges: {:?}", stream_error);
+                }
+            }
         });
         async_ws_io_rt.block_on(local);
     });
@@ -158,8 +172,6 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     t2.join();
     t3.join();
     t4.join();
-    info!("made it here");
-
     Ok(())
 }
 

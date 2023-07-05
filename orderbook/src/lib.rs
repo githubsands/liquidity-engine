@@ -165,7 +165,7 @@ macro_rules! new_level {
     };
 }
 
-new_level!(N);
+new_level!(2);
 
 #[derive(Clone)]
 pub struct OrderBook {

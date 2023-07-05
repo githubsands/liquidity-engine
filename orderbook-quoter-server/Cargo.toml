@@ -25,3 +25,4 @@ config = { path = "../config"}
 internal-objects = { path = "../internal-objects"}
 exchange-controller = { path = "../exchange-controller"}
 orderbook = { path = "../orderbook"}
+tokio-context = "0.1.3"
