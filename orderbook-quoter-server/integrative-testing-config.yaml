@@ -17,6 +17,7 @@ exchanges:
     http_client: true
     snapshot_uri: "http://localhost:8083/depths"
     ws_uri: "wss://localhost:8082"
+    ws_poll_rate_milliseconds: 95
     depth: 5000
     buffer_size: 2048
     watched_pair: "USDT/BTC"

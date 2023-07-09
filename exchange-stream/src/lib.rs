@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::{pin::Pin, task::Poll};
 
-use serde_json::{from_str, to_string as jsonify, Value as JsonValue};
+use serde_json::from_str;
 
 use pin_project_lite::pin_project;
 
@@ -14,10 +14,7 @@ use tokio_tungstenite::{
     tungstenite::protocol::WebSocketConfig, MaybeTlsStream, WebSocketStream,
 };
 
-use tokio::sync::mpsc::{channel as asyncChannel, Receiver, Sender as asyncSender};
-use tokio::sync::watch::{
-    channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
-};
+use tokio::sync::watch::Receiver as watchReceiver;
 use tokio::time::{sleep, Duration};
 
 use crossbeam_channel::{Sender, TrySendError};
@@ -42,6 +39,7 @@ pin_project! {
         pub http_snapshot_uri: String,
         pub buffer_websocket_depths: bool,
         pub ws_subscribe: bool,
+        pub ws_poll_rate: u64,
         pub websocket_uri: String,
         pub watched_pair: String,
 
@@ -81,6 +79,7 @@ impl ExchangeStream {
             snapshot_enabled: exchange_config.snapshot_enabled,
             http_snapshot_uri: exchange_config.snapshot_uri.clone() + "/depths",
             ws_subscribe: false,
+            ws_poll_rate: exchange_config.ws_poll_rate_milliseconds.into(),
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
@@ -162,7 +161,6 @@ impl ExchangeStream {
                         self.buffer_websocket_depths = true;
                         let mut success = false;
                         while !success {
-                            sleep(Duration::from_secs(2)).await;
                             let pull_result = self.pull_depths().await;
                             match pull_result {
                                 Ok(mut depths) => {
@@ -189,12 +187,15 @@ impl ExchangeStream {
                             self.next().await;
                         }
                     }
-                _ = tokio::time::sleep(Duration::from_nanos(1)) => {
+                // Most exchanges ws updates updates every 100 milliseconds so no need to poll more then
+                // this.
+                _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
                     _ = self.next().await
 
                 }
             }
         } else {
+            tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)).await;
             self.next().await;
         }
     }
@@ -424,6 +425,7 @@ mod tests {
     use std::sync::Mutex as syncMutex;
     use std::thread;
     use testing_traits::ProducerDefault;
+    use tokio::sync::watch::channel as watchChannel;
     use tokio::sync::Mutex;
     use tokio::time::{sleep, Duration};
     use tracing::info;
@@ -440,6 +442,7 @@ mod tests {
                 websocket_depth_buffer: Vec::new(),
                 http_snapshot_uri: String::from(""),
                 ws_subscribe: false,
+                ws_poll_rate: 90,
                 websocket_uri: String::from(""),
                 watched_pair: String::from(""),
                 buffer_websocket_depths: true,
@@ -660,4 +663,4 @@ mod tests {
 
 // test stream with trigger select
 // test stream triggered snapsho
-//test stream sequenced depths
+// test stream sequenced depths
