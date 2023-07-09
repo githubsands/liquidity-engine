@@ -36,6 +36,7 @@ pin_project! {
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
         pub websocket_depth_buffer: Vec<DepthUpdate>,
+        pub pull_retry_count: u8,
         pub http_snapshot_uri: String,
         pub buffer_websocket_depths: bool,
         pub ws_subscribe: bool,
@@ -77,6 +78,7 @@ impl ExchangeStream {
             websocket_depth_buffer: Vec::with_capacity(15000),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
+            pull_retry_count: 5,
             http_snapshot_uri: exchange_config.snapshot_uri.clone() + "/depths",
             ws_subscribe: false,
             ws_poll_rate: exchange_config.ws_poll_rate_milliseconds.into(),
@@ -154,13 +156,13 @@ impl ExchangeStream {
         self.buffer_websocket_depths = false;
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), ErrorHotPath> {
         if let Some(trigger) = &mut self.snapshot_trigger {
             tokio::select! {
                     _ = trigger.changed()=> {
                         self.buffer_websocket_depths = true;
-                        let mut success = false;
-                        while !success {
+                        let mut pull_retry_count = 0;
+                        while pull_retry_count < self.pull_retry_count {
                             let pull_result = self.pull_depths().await;
                             match pull_result {
                                 Ok(mut depths) => {
@@ -170,33 +172,77 @@ impl ExchangeStream {
                                                        // but this time the websocket depths are stored in their own buffer
                                                        // to be sequenced
                                 }
-                                success = true;
+                                    break
                                 }
                                 Err(pull_error) => {
-                                    warn!("failed to get websocket depths from exchange {}", pull_error)
+                                    if pull_retry_count == self.pull_retry_count {
+                                        error!("reached maxed snapshot pull count retry for exchange {} received error: {}", self.exchange_name, pull_error);
+                                        return Err(ErrorHotPath::ExchangeStreamSnapshot(pull_error.to_string()))
+                                    }
+                                    pull_retry_count = pull_retry_count + 1;
+                                    warn!("failed to get websocket depths from exchange {}", pull_error);
+                                    continue
+                                    }
                                 }
                             }
-                        }
                         // we are done push snapshot depths to the orderbook - turn this buffer off
                         // and push the buffer websocket depths to the orderbook
                         self.buffer_websocket_depths = false;
-
 
                         while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
                             self.buffer.push(websocket_depth);
                             self.next().await;
                         }
+                        Ok(())
                     }
                 // Most exchanges ws updates updates every 100 milliseconds so no need to poll more then
                 // this.
+                // TODO: Define these errors explicitly - they are not all ExchangeWSErrors
                 _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
-                    _ = self.next().await
-
+                    if let Some(stream_poll_state) = self.next().await {
+                match stream_poll_state {
+                    WSStreamState::Success => return Ok(()),
+                    WSStreamState::WaitingForDepth => return Ok(()),
+                    WSStreamState::FailedStream => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
+                    WSStreamState::SenderError => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
+                    WSStreamState::WSError(ws_error) => {
+                        return Err(ErrorHotPath::ExchangeWSError(ws_error.to_string()))
+                    }
+                    WSStreamState::FailedDeserialize => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
                 }
+            } else {
+                return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
+            }
+            }
             }
         } else {
             tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)).await;
-            self.next().await;
+            if let Some(stream_poll_state) = self.next().await {
+                match stream_poll_state {
+                    WSStreamState::Success => return Ok(()),
+                    WSStreamState::WaitingForDepth => return Ok(()),
+                    WSStreamState::FailedStream => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
+                    WSStreamState::SenderError => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
+                    WSStreamState::WSError(ws_error) => {
+                        return Err(ErrorHotPath::ExchangeWSError(ws_error.to_string()))
+                    }
+                    WSStreamState::FailedDeserialize => {
+                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                    }
+                }
+            } else {
+                return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
+            }
         }
     }
     // TODO: Do not dynamically allocate errors in pull_depth
@@ -440,6 +486,7 @@ mod tests {
                 exchange_name: 1,
                 snapshot_enabled: false,
                 websocket_depth_buffer: Vec::new(),
+                pull_retry_count: 5,
                 http_snapshot_uri: String::from(""),
                 ws_subscribe: false,
                 ws_poll_rate: 90,
