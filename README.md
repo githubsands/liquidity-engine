@@ -86,20 +86,6 @@ Provides both HTTP and websocket endpoints for depths. Leverages depth generator
 
 Dockerized exchange stub for full integration testing.
 
-
-(1) Required state required is rebuilding the orderbook if a ExchangeStream websocket connection fails. 
-
-(2) Reduce dynamic memory allocations
-
-(3) Possibly run ask and bid reader threads to in their own threads rather
-then having both readers run on the same core (a threadpool also would be another lower dev cost solution here)
-
-(4) Use a decimals or another solution over floats for quantities.
-
-(5) Use a decimals or another solution over floats for price levels.
-
-(6) Possibly more performant atomic memory ordering 
-
 ### Quote GRPC Server
 
 Takes the spread and provides the best ten deals and asks to a grpc client
