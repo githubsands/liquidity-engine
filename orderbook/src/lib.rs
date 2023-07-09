@@ -1271,6 +1271,182 @@ mod tests {
         assert!(result == true);
     }
 
+    #[global_allocator]
+    #[rustfmt::skip]
+    static ALLOC: dhat::Alloc = dhat::Alloc;
+    #[test]
+    #[traced_test]
+    #[rustfmt::skip]
+    fn test_stack_only_orderbook_write_reads() {
+        let (mut orderbook, _) = OrderBook::consumer_default();
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let best_deal = 2700.00;
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: best_deal,
+            q: 30.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2699.63, // skip some levels
+            q: 77.0,
+            l: 2,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2699.63,
+            q: 50.0,
+            l: 1, // add liquidty at another location (exchange)
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2690.33,
+            q: 13.09,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2689.39,
+            q: 25.22,
+            l: 2,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2687.20,
+            q: 34.88,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2685.20,
+            q: 23.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2684.33,
+            q: 99.1,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2682.99,
+            q: 70.22,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2680.33,
+            q: 47.20,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.bid_update(DepthUpdate {
+            k: 1,
+            p: 2679.22,
+            q: 23.33,
+            l: 1,
+            s: false,
+        });
+
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: best_deal,
+            q: 40.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2700.63, // skip some levels
+            q: 1.0,
+            l: 2,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2700.63,
+            q: 77.0,
+            l: 1, // add liquidty at another location (exchange)
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2700.64,
+            q: 13.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2705.65,
+            q: 25.0,
+            l: 2,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2705.66,
+            q: 34.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2705.67,
+            q: 23.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2705.68,
+            q: 99.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2705.69,
+            q: 70.0,
+            l: 2,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2709.70,
+            q: 47.0,
+            l: 1,
+            s: false,
+        });
+        let _ = orderbook.ask_update(DepthUpdate {
+            k: 0,
+            p: 2709.71, // TODO: BUG this value returns a 2709.7
+            q: 23.0,
+            l: 1,
+            s: false,
+        });
+
+        orderbook.best_deal_bids_level_price.set(2700.0);
+        let actual_deals = orderbook.traverse_bids().unwrap();
+        orderbook.best_deal_asks_level_price.set(2700.0);
+        let actual_deals = orderbook.traverse_asks().unwrap();
+        orderbook.best_deal_asks_level_price.set(best_deal);
+        let stats = dhat::HeapStats::get();
+        dhat::assert_eq!(stats.curr_bytes, 0);
+        dhat::assert_eq!(stats.curr_blocks, 0);
+    }
+
     // DepthMachine provides us with tooling to inject depths into the orderbook its currently used
     // for three tests
     //
