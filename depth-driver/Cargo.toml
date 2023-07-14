@@ -1,5 +1,5 @@
 [package]
-name = "exchange-controller"
+name = "depth-driver"
 version = "0.1.0"
 edition = "2021"
 

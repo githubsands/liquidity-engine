@@ -195,8 +195,8 @@ impl ExchangeStream {
                         }
                         Ok(())
                     }
-                // Most exchanges ws updates updates every 100 milliseconds so no need to poll more then
-                // this.
+                // Most exchanges ws updates every 100 milliseconds so there is no need to poll more then
+                //
                 // TODO: Define these errors explicitly - they are not all ExchangeWSErrors
                 _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
                     if let Some(stream_poll_state) = self.next().await {

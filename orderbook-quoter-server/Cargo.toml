@@ -23,6 +23,6 @@ io-context = "0.2.0"
 
 config = { path = "../config"}
 internal-objects = { path = "../internal-objects"}
-exchange-controller = { path = "../exchange-controller"}
+depth-driver = { path = "../depth-driver"}
 orderbook = { path = "../orderbook"}
 tokio-context = "0.1.3"

@@ -695,6 +695,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2e66c9d817f1720209181c316d28635c050fa304f9c79e47a520882661b7308"
 
 [[package]]
+name = "depth-driver"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "cross",
+ "crossbeam-channel",
+ "exchange-stream",
+ "futures 0.3.28",
+ "futures-util",
+ "market-objects",
+ "quoter-errors",
+ "seq-macro",
+ "serde_json",
+ "tokio 1.29.1",
+ "tokio-context",
+ "tokio-tungstenite 0.19.0",
+ "tracing",
+ "tungstenite 0.19.0",
+ "use",
+]
+
+[[package]]
 name = "depth-generator"
 version = "0.2.0"
 dependencies = [
@@ -818,28 +840,6 @@ name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
-
-[[package]]
-name = "exchange-controller"
-version = "0.1.0"
-dependencies = [
- "config",
- "cross",
- "crossbeam-channel",
- "exchange-stream",
- "futures 0.3.28",
- "futures-util",
- "market-objects",
- "quoter-errors",
- "seq-macro",
- "serde_json",
- "tokio 1.29.1",
- "tokio-context",
- "tokio-tungstenite 0.19.0",
- "tracing",
- "tungstenite 0.19.0",
- "use",
-]
 
 [[package]]
 name = "exchange-stream"
@@ -1923,7 +1923,7 @@ dependencies = [
  "config",
  "core_affinity",
  "crossbeam-channel",
- "exchange-controller",
+ "depth-driver",
  "futures 0.3.28",
  "internal-objects",
  "io-context",

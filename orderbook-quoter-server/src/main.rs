@@ -41,7 +41,7 @@ use tracing_subscriber;
 
 use internal_objects::Deals;
 
-use exchange_controller::ExchangeController;
+use depth_driver::ExchangeController;
 use orderbook::OrderBook;
 
 use tokio::sync::watch::channel as watchChannel;
@@ -76,7 +76,7 @@ fn main() {
 fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let core_ids = core_affinity::get_core_ids().unwrap();
     let mut ctx = Context::background();
-    let (mut asyncCtx, _parent_handle) = asyncContext::new();
+    let (mut async_ctx, _parent_handle) = asyncContext::new();
     let _ = ctx.add_cancel_signal();
     let parent_ctx = ctx.freeze();
     let process_depths_ctx = Context::create_child(&parent_ctx);
@@ -135,7 +135,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();
     let config = config.clone();
     let t4 = thread::spawn(move || {
-        info!("starting grpc io");
+        info!("starting ws io");
         let async_ws_io_rt = Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -146,21 +146,21 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         let local = LocalSet::new();
         let _ = core_affinity::set_for_current(io_ws_core);
         local.spawn_local(async move {
-            let mut exchange_controller =
-                ExchangeController::new(&config.exchanges, depth_producer, snapshot_depth_consumer)
+            let mut depth_driver =
+                DepthDriver::new(&config.exchanges, depth_producer, snapshot_depth_consumer)
                     .unwrap();
-            let start_result = exchange_controller.websocket_connect().await;
+            let start_result = depth_driver.websocket_connect().await;
             match start_result {
-                Ok(_) => exchange_controller.close_exchanges().await,
+                Ok(_) => depth_driver.close_exchanges().await,
                 Err(stream_error) => {
                     panic!("failed to stream exchanges: {:?}", stream_error);
                 }
             }
-            let _ = exchange_controller.subscribe_depths().await;
-            let _ = exchange_controller.build_orderbook().await;
-            let stream_result = exchange_controller.run_streams(&mut asyncCtx).await;
+            let _ = depth_driver.subscribe_depths().await;
+            let _ = depth_driver.build_orderbook().await;
+            let stream_result = depth_driver.run_streams(&mut async_ctx).await;
             match stream_result {
-                Ok(_) => exchange_controller.close_exchanges().await,
+                Ok(_) => depth_driver.close_exchanges().await,
                 Err(stream_error) => {
                     panic!("failed to stream exchanges: {:?}", stream_error);
                 }

@@ -31,12 +31,12 @@ Files changed by the build script are:
 ### ExchangeStream
 
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
-but it currently is not implemented in the Orderbook/ExchangeController. 
+but it currently is not implemented in the Orderbook/DepthDriver. 
 
 Future work: Ideally these streams are done purely on the stack but this must be verified. Correct 
 sequencing of orderbook snapshots and depth updates through their timestamps
 
-### ExchangeController
+### DepthDriver
 
 Provides a controlling interface to all exchange streams. 
 
