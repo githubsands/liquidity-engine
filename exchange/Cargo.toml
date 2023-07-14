@@ -1,0 +1,18 @@
+[package]
+name = "exchange"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+exchange-stream = { path = "../exchange-stream"}
+market-objects = { path = "../market-objects"}
+quoter-errors = { path = "../quoter-errors"}
+config = { path = "../config"}
+tokio = "1.29.1"
+crossbeam-channel = "0.5.8"
+tokio-tungstenite = "0.19.0"
+futures = "0.3.28"
+serde_json = "1.0.102"
+futures-util = "0.3.28"

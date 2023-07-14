@@ -33,8 +33,12 @@ Files changed by the build script are:
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
 but it currently is not implemented in the Orderbook/DepthDriver. 
 
-Future work: Ideally these streams are done purely on the stack but this must be verified. Correct 
+Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
 sequencing of orderbook snapshots and depth updates through their timestamps
+
+### Exchange
+
+Wrapper around exchange stream to handle websocket sinks and other functionality
 
 ### DepthDriver
 

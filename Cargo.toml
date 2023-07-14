@@ -7,6 +7,7 @@ edition = "2021"
 members = [
     "orderbook-quoter-server",
     "exchange-stream",
+    "exchange",
     "depth-driver",
     "testing/depth-generator",
     "testing/exchange-stubs",
