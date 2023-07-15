@@ -32,11 +32,11 @@ pub struct RingBufferConfig {
 pub struct ExchangeConfig {
     pub client_name: String,
     pub exchange_name: u8,
+    pub http_client: bool,
     pub snapshot_enabled: bool,
     pub snapshot_uri: String,
     pub ws_uri: String,
     pub ws_poll_rate_milliseconds: u8,
-    pub http_client: bool,
     pub depth: u64,
     pub buffer_size: usize,
     pub watched_pair: String,

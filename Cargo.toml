@@ -32,4 +32,7 @@ serde = "1.0.166"
 serde_yaml = "0.9.22"
 config = { path = "config"}
 
+[[bin]]
+name = "orderbook-quoter-server"
+path = "orderbook-quoter-server/src/main.rs"
 
