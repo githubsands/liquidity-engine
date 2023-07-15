@@ -1,32 +1,32 @@
-io_thread_percentage: 0.6
 exchanges:
   - client_name: "binance_usa_1"
     host_uri:
-    exchange_name: 2
+    exchange_name: 1
     snapshot_enabled: true
     http_client: true
-    snapshot_uri: "http://localhost:8081/depths"
-    ws_uri: "wss://localhost:8080"
+    snapshot_uri: "http://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=100"
+    ws_uri: "wss://stream.binance.us:9443/ws"
+    ws_poll_rate_milliseconds: 95
     depth: 5000
     buffer_size: 2048
-    watched_pair: "USDT/BTC"
+    watched_pair: "BTCUSDT"
   - client_name: "binance_usa_2"
     host_uri:
     exchange_name: 2
     snapshot_enabled: true
     http_client: true
-    snapshot_uri: "http://localhost:8083/depths"
-    ws_uri: "wss://localhost:8082"
+    snapshot_uri: "http://api.binance.us/api/v3/depth?symbol=BTCUSDT&limit=100"
+    ws_uri: "wss://stream.binance.us:9443/ws"
     ws_poll_rate_milliseconds: 95
     depth: 5000
     buffer_size: 2048
-    watched_pair: "USDT/BTC"
+    watched_pair: "BTCUSDT"
 orderbook:
   exchange_count: 2
-  depth: 200
+  depth: 5000
   tick_size: 0.01
   mid_price: 2700
-  ticker: "BTC/USDT"
+  ticker: "BTCUSDT"
   ring_buffer:
     ring_buffer_size: 1024
     channel_buffer_size: 512

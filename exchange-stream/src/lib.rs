@@ -79,7 +79,7 @@ impl ExchangeStream {
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
             pull_retry_count: 5,
-            http_snapshot_uri: exchange_config.snapshot_uri.clone() + "/depths",
+            http_snapshot_uri: exchange_config.snapshot_uri.clone(),
             ws_subscribe: false,
             ws_poll_rate: exchange_config.ws_poll_rate_milliseconds.into(),
             websocket_uri: exchange_config.ws_uri.clone(),
