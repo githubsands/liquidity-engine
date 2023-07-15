@@ -8,10 +8,51 @@ are provided through a grpc server endpoint
 
 # Lower level
 
-IO components, ExchangeStreams, and Quote GRPC Server, are ran on seperate tokio runtimes in their own
+IO components: ExchangeStreams, and Quote GRPC Server are ran on seperate tokio runtimes in their own
 pinned threads.
 
-Orderbook is ran with multiplie threads. One for writing to the orderbook the others for reading the orderbook
+Orderbook is ran with multiplie threads. One for writing to the book the others for reading it.
+
+# Configuration
+
+Exchange boots through a config by running `./orderbook-quoter-server --config=$(CONFIG_LOCATION)`. The 
+amount of exchanges in the exchange array must be equal to the orderbook's `exchange_count`. Every
+`depth` field must be equal in the exchanges and orderbook sections.
+
+```       
+exchanges:
+  - client_name: "binance_usa_1"
+    exchange_name: 1
+    snapshot_enabled: true
+    http_client: true
+    snapshot_uri: "http://localhost:5000"
+    ws_uri: "wss://localhost:5001"
+    ws_poll_rate_milliseconds: 99
+    ws_presequenced_depth_buffer: 4000,
+    depth: 5000
+    buffer_size: 6000
+- client_name: "binance_usa_2"
+    exchange_name: 2
+    snapshot_enabled: true
+    http_client: true
+    snapshot_uri: "http://localhost:6000"
+    ws_uri: "wss://localhost:6001"
+    ws_poll_rate_milliseconds: 99
+    ws_presequenced_depth_buffer: 4000,
+    depth: 5000
+    buffer_size: 6000
+orderbook:
+  exchange_count: 2
+  depth: 5000
+  tick_size: 0.01
+  mid_price: 2700
+  ticker: "BTCUSDT"
+  ring_buffer:
+    ring_buffer_size: 1024
+    channel_buffer_size: 512
+grpc_server:
+  host_uri: "127.0.0.1:5000"
+```
 
 # Building
 
@@ -46,10 +87,10 @@ Provides a controlling interface to all exchange streams.
 
 Future work: 
 
-(1) Handle more then just two exchanges (currently the orderbook can be configured for N exchanges but not the exchange controller)
+(1) Needs to handle orderbook reset and orderbook snapshot
+retriggering with correct sequencing
 
-(2) Needs to handle orderbook reset and orderbook snapshot
-retriggering with correct sequencing, and websocket reconnection.
+(2) Exchange Stream websocket failure states.
 
 ### Orderbook
 
@@ -67,8 +108,8 @@ Future work:
 
 (2) Reduce dynamic memory allocations
 
-(3) Possibly run ask and bid reader threads in their own threads rather
-then having both readers run on the same core (a threadpool also would be another lower dev cost solution here)
+(3) Different thread scheme for orderbook reading - currently it's thread spins up child threads for 
+ask and bid traversal. By default this should have a threadpool though so we don't waste time making new threads.
 
 (4) Use a decimals or another solution over floats for quantities.
 
@@ -81,6 +122,10 @@ then having both readers run on the same core (a threadpool also would be anothe
 #### 1. Depth Generator
 
 Generates depths in many different sequences.
+
+Future Work:
+
+Oscillating Depths rather then just upward and downward trends
 
 #### 2. Exchange Stubs
 
