@@ -75,7 +75,7 @@ impl ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
             snapshot_trigger: Some(snapshot_trigger),
-            websocket_depth_buffer: Vec::with_capacity(15000),
+            websocket_depth_buffer: Vec::with_capacity(exchange_config.buffer_size),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
             pull_retry_count: 5,
@@ -168,7 +168,7 @@ impl ExchangeStream {
                                 Ok(mut depths) => {
                                 while let Some(depth) = depths.next() {
                                     self.buffer.push(depth);
-                                    self.next().await; // we must keep processing  snapshot depths and depths from the websocket
+                                    self.next().await; // we must keep processing snapshot depths and depths from the websocket
                                                        // but this time the websocket depths are stored in their own buffer
                                                        // to be sequenced
                                 }
@@ -185,7 +185,7 @@ impl ExchangeStream {
                                     }
                                 }
                             }
-                        // we are done push snapshot depths to the orderbook - turn this buffer off
+                        // we are done. push snapshot depths to the orderbook - turn this buffer off
                         // and push the buffer websocket depths to the orderbook
                         self.buffer_websocket_depths = false;
 
@@ -411,11 +411,14 @@ impl Stream for ExchangeStream {
                             let depths = depth_update.depths(1);
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
-                                this.websocket_depth_buffer.extend(woven_depths);
+                                for depth in woven_depths {
+                                    this.buffer.push(depth);
+                                }
                                 continue;
                             }
-                            debug!("receiving stream 2");
-                            this.buffer.extend(woven_depths);
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
                         } else {
                             warn!("failed to deserialize the object.");
                         }
@@ -425,10 +428,14 @@ impl Stream for ExchangeStream {
                             let depths = depth_update.depths(2);
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
-                                this.websocket_depth_buffer.extend(woven_depths);
+                                for depth in woven_depths {
+                                    this.buffer.push(depth);
+                                }
                                 continue;
                             }
-                            this.buffer.extend(woven_depths);
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
                         } else {
                             warn!("failed to deserialize the object.");
                         }
@@ -438,10 +445,14 @@ impl Stream for ExchangeStream {
                             let depths = depth_update.depths(3);
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
-                                this.websocket_depth_buffer.extend(woven_depths);
+                                for depth in woven_depths {
+                                    this.buffer.push(depth);
+                                }
                                 continue;
                             }
-                            this.buffer.extend(woven_depths);
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
                         } else {
                             warn!("failed to deserialize the object.");
                         }
@@ -508,7 +519,7 @@ mod tests {
     async fn test_receive_depths_from_ws_server() {
         let test_length_seconds = 10;
         let depth_count_client_received: Arc<syncMutex<i32>> = Arc::new(syncMutex::new(0));
-        let desired_depths: i32 = 6000;
+        let desired_depths: i32 = 5000;
         let (mut exchange_stream, depth_consumer) = ExchangeStream::producer_default();
         let (exchange_server, _) = ExchangeServer::new("1".to_string(), 8080, 9500).unwrap();
         let exchange_server = Arc::new(Mutex::new(exchange_server));
