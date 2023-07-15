@@ -256,10 +256,8 @@ impl OrderBook {
         let mut asks: AtomicMap<OrderedFloat<f64>, Level<LiquidityNode>> = AtomicMap::new();
         let mut current_level = mid_level;
         let mut max_ask_level = 0.0;
-        let mut min_ask_level = 0.0;
         for i in 0..=depth as u64 {
             if i == 0 {
-                min_ask_level = current_level;
                 let level = Level::new(current_level);
                 asks.insert(OrderedFloat(round(current_level, 100.0)), level);
             } else {
@@ -272,14 +270,28 @@ impl OrderBook {
             }
         }
 
+        // build the opposite side of the mid level for asks
+        current_level = mid_level;
+        let mut min_ask_level = 0.0;
+        for i in 0..=depth as u64 {
+            if i == 0 {
+                continue;
+            } else {
+                current_level = current_level - tick_size;
+                let level = Level::new(current_level);
+                asks.insert(OrderedFloat(round(current_level, 100.0)), level);
+                if i == depth as u64 {
+                    min_ask_level = round(current_level, 100.0);
+                }
+            }
+        }
+
         // building bid side
         let mut bids: AtomicMap<OrderedFloat<f64>, Level<LiquidityNode>> = AtomicMap::new();
         current_level = mid_level;
-        let mut max_bid_level = 0.0;
         let mut min_bid_level = 0.0;
         for i in 0..=depth as u64 {
             if i == 0 {
-                max_bid_level = current_level;
                 let level = Level::new(current_level);
                 bids.insert(OrderedFloat(round(current_level, 100.0)), level);
             } else {
@@ -288,6 +300,22 @@ impl OrderBook {
                 bids.insert(OrderedFloat(round(current_level, 100.0)), level);
                 if i == depth as u64 {
                     min_bid_level = round(current_level, 100.0);
+                }
+            }
+        }
+
+        // build the opposite side of the mid level for bids
+        current_level = mid_level;
+        let mut max_bid_level = 0.0;
+        for i in 0..=depth as u64 {
+            if i == 0 {
+                continue;
+            } else {
+                current_level = current_level + tick_size;
+                let level = Level::new(current_level);
+                bids.insert(OrderedFloat(round(current_level, 100.0)), level);
+                if i == depth as u64 {
+                    max_bid_level = round(current_level, 100.0);
                 }
             }
         }
@@ -835,15 +863,6 @@ impl OrderBook {
         }
         return Ok(deals);
     }
-
-    #[inline]
-    fn send_deals(&self, deals: Deals) -> Result<(), ErrorHotPath> {
-        while let Err(send_error) = self.deal_producer.try_send(deals) {
-            warn!("failed to send deal {:?}", send_error);
-            continue;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -940,8 +959,8 @@ mod tests {
         info!("max bid: {}", max_bid_level);
         info!("min bid: {}", min_bid_level);
         assert!(max_ask_level == 2750.0);
-        assert!(min_ask_level == 2700.0);
-        assert!(max_bid_level == 2700.0);
+        assert!(min_ask_level == 2650.0);
+        assert!(max_bid_level == 2750.0);
         assert!(min_bid_level == 2650.0);
         // 2. test that each level of the order book has initial incremental exchange locations
         let mut current_level = mid_level;
