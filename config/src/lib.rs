@@ -37,6 +37,7 @@ pub struct ExchangeConfig {
     pub snapshot_uri: String,
     pub ws_uri: String,
     pub ws_poll_rate_milliseconds: u8,
+    pub ws_presequenced_depth_buffer: usize,
     pub depth: u64,
     pub buffer_size: usize,
     pub watched_pair: String,

@@ -75,7 +75,9 @@ impl ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
             snapshot_trigger: Some(snapshot_trigger),
-            websocket_depth_buffer: Vec::with_capacity(exchange_config.buffer_size),
+            websocket_depth_buffer: Vec::with_capacity(
+                exchange_config.ws_presequenced_depth_buffer,
+            ),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
             pull_retry_count: 5,
