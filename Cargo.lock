@@ -1513,18 +1513,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyrock-main"
-version = "0.1.0"
-dependencies = [
- "config",
- "prost",
- "serde",
- "serde_yaml",
- "tokio 1.29.1",
- "tonic-build",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1994,6 +1982,18 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "orderbook-quoter-server-pkgs"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "prost",
+ "serde",
+ "serde_yaml",
+ "tokio 1.29.1",
+ "tonic-build",
 ]
 
 [[package]]

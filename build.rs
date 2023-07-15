@@ -12,7 +12,7 @@ struct ExchangeMacro {
     replacement_value: &'static str,
 }
 
-const CONFIG_LOCATION: &'static str = "orderbook-quoter-server/integrative-testing-config.yaml";
+const CONFIG_LOCATION: &'static str = "integrative-testing-config.yaml";
 
 const EXCHANGE_MACROS: [ExchangeMacro; 1] = [ExchangeMacro {
     macro_name: "orderbook_levels",
