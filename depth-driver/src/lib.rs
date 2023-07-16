@@ -7,6 +7,7 @@ use tokio::sync::watch::{
     channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
 };
 use tokio_context::context::Context;
+use tracing::info;
 
 use futures::pin_mut;
 use futures::stream::FuturesOrdered;
@@ -81,6 +82,7 @@ impl DepthDriver {
     // run_streams is the main driver the entire program that continously polls websocket depths from
     // N exchanges and also handles orderbook rebuilds
     pub async fn run_streams(&mut self, ctx: &mut Context) -> Result<(), ErrorHotPath> {
+        info!("running streams");
         let inner_trigger = &mut self.orderbook_snapshot_trigger;
         let mut exchanges: Vec<*mut Exchange> = vec![];
         let mut streams = FuturesOrdered::new();
@@ -108,7 +110,10 @@ impl DepthDriver {
                         }
                         // this future here polls each exchange's websocket as usual
                         // TODO: Handle error conditions
-                        _ = streams.next() => {}
+                        _ = streams.next() => {
+                            info!("streaming")
+                        }
+
                         _ = ctx.done() => {
                             return Ok(());
                         }

@@ -26,9 +26,9 @@ exchanges:
     watched_pair: "BTCUSDT"
 orderbook:
   exchange_count: 2
-  depth: 5000
+  depth: 100000
   tick_size: 0.01
-  mid_price: 2700
+  mid_price: 30400.50
   ticker: "BTCUSDT"
   ring_buffer:
     ring_buffer_size: 1024

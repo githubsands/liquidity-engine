@@ -27,7 +27,7 @@ use market_objects::DepthUpdate;
 
 use quoter_errors::ErrorHotPath;
 use ring_buffer::RingBuffer;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use io_context::Context;
 
@@ -212,7 +212,7 @@ impl OrderBook {
             );
         let (ring_buffer, depth_producers) = RingBuffer::new(&config.ring_buffer);
         let orderbook: OrderBook = OrderBook {
-            write_lock: Arc::new(AtomicBool::new(false)),
+            write_lock: Arc::new(AtomicBool::new(true)),
             read_lock: Arc::new(AtomicBool::new(false)),
 
             ring_buffer,
@@ -404,6 +404,7 @@ impl OrderBook {
         loop {
             if let Some(reason) = ctx.done() {
                 debug!("context was triggered: {}", reason);
+                // TODO: Should not be a error
                 return Err(ErrorHotPath::OrderBook(
                     "shutting down through context".to_string(),
                 ));
@@ -421,6 +422,8 @@ impl OrderBook {
                 match buffer_consume_result {
                     Ok(()) => match self.ring_buffer.pop_depth() {
                         Some(depth_update) => {
+                            info!("depth is {:?}", depth_update);
+
                             if depth_update.s {
                                 if let Err(update_book_err) =
                                     self.update_book_snapshots(depth_update)
@@ -436,7 +439,6 @@ impl OrderBook {
                                 if self.send_deals {
                                     self.read_lock.store(true, Ordering::SeqCst);
                                 } else {
-                                    thread::sleep(Duration::from_millis(1));
                                     self.write_lock.store(true, Ordering::SeqCst);
                                 }
                                 continue;

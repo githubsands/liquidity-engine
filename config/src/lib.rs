@@ -17,7 +17,7 @@ pub struct OrderbookConfig {
     pub ring_buffer: RingBufferConfig,
     pub exchange_count: i64,
     pub depth: i64,
-    pub mid_price: i64,
+    pub mid_price: f64,
     pub tick_size: f64,
     pub ticker: String,
 }

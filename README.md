@@ -18,7 +18,8 @@ Orderbook is ran with multiplie threads. One for writing to the book the others 
 Exchange boots through a config by running `./orderbook-quoter-server --config=$(CONFIG_LOCATION)`. The 
 amount of exchanges in the exchange array must be equal to the orderbook's `exchange_count`. Every
 `depth` field must be equal in the exchanges and orderbook's depth field should cover the entire 
-expected trading range for the lifetime of this service.
+expected trading range for the lifetime of this service. The larger expected volatility the higher the orderbook's
+depth needs to be.
 
 ```       
 exchanges:
