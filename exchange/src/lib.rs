@@ -10,6 +10,7 @@ use tokio::sync::watch::{
     channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
 };
 use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+use tracing::info;
 
 use crossbeam_channel::Sender;
 
@@ -52,6 +53,10 @@ impl Exchange {
     }
     pub async fn subscribe_orderbooks(&mut self) -> Result<(), ErrorInitialState> {
         // TODO: Add many different subscription messages here and a configurable trigger
+        info!(
+            "exchange {} subscribing to the orderbooks",
+            self.websocket_uri
+        );
         let json_obj_binance = serde_json::json!({
             "method": "SUBSCRIBE",
             "params": [

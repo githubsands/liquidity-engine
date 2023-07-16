@@ -54,7 +54,7 @@ use tokio::sync::Mutex;
 use tokio_context::context::Context as asyncContext;
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().init();
     let matches = App::new("orderbook quoter server")
         .arg(
             Arg::new("config")
@@ -103,15 +103,13 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         let _ = core_affinity::set_for_current(orderbook_depth_processor_core);
     });
 
-    let orderbook_package_deals_core = core_ids[1];
     let mut orderbook_clone = orderbook.clone();
     let t2 = thread::spawn(move || {
         info!("starting orderbook, deal packer, reader thread");
         _ = orderbook_clone.package_deals(&package_deals_ctx);
-        let _ = core_affinity::set_for_current(orderbook_package_deals_core);
     });
 
-    let io_grpc_core = core_ids[2];
+    let io_grpc_core = core_ids[1];
     let config_clone = config.clone();
     let t3 = thread::spawn(move || {
         info!("starting grpc io");

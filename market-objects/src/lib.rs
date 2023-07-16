@@ -93,11 +93,11 @@ impl Display for BinanceDepthUpdate {
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct WSDepthUpdateBinance {
-    #[serde(deserialize_with = "as_f64")]
-    pub e: f64,
+    #[serde(skip)]
+    pub e: String,
     #[serde(deserialize_with = "as_f64")]
     pub E: f64,
-    #[serde(deserialize_with = "as_f64")]
+    #[serde(skip)]
     pub s: f64,
     #[serde(deserialize_with = "as_f64")]
     pub U: f64,
@@ -110,7 +110,7 @@ pub struct WSDepthUpdateBinance {
 impl Default for WSDepthUpdateBinance {
     fn default() -> Self {
         Self {
-            e: 0.0,
+            e: "".to_string(),
             E: 0.0,
             s: 0.0,
             U: 0.0,

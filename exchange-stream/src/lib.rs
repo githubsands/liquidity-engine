@@ -41,6 +41,7 @@ pin_project! {
         pub buffer_websocket_depths: bool,
         pub ws_subscribe: bool,
         pub ws_poll_rate: u64,
+        pub stream_count: u8,
         pub websocket_uri: String,
         pub watched_pair: String,
 
@@ -86,6 +87,7 @@ impl ExchangeStream {
             ws_poll_rate: exchange_config.ws_poll_rate_milliseconds.into(),
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
+            stream_count: 0,
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
             buffer: Vec::with_capacity(exchange_config.buffer_size),
             ws_connection_orderbook_reader: None,
@@ -409,6 +411,11 @@ impl Stream for ExchangeStream {
             match stream_option {
                 Some(Ok(ws_message)) => match (&*this.exchange_name, ws_message) {
                     (1, ws_message) => {
+                        if *this.stream_count != 1 {
+                            // ignore the NULL message from binance
+                            *this.stream_count = 1;
+                            return Poll::Ready(Some(WSStreamState::Success));
+                        }
                         if let Ok(depth_update) = WSDepthUpdateBinance::try_from(ws_message) {
                             let depths = depth_update.depths(1);
                             let woven_depths = interleave(depths.0, depths.1);
@@ -426,6 +433,11 @@ impl Stream for ExchangeStream {
                         }
                     }
                     (2, ws_message) => {
+                        if *this.stream_count != 1 {
+                            // ignore the NULL message from binance
+                            *this.stream_count = 1;
+                            return Poll::Ready(Some(WSStreamState::Success));
+                        }
                         if let Ok(depth_update) = WSDepthUpdateBinance::try_from(ws_message) {
                             let depths = depth_update.depths(2);
                             let woven_depths = interleave(depths.0, depths.1);

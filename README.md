@@ -89,7 +89,7 @@ Provides a controlling interface to all exchange streams.
 Future work: 
 
 (1) Needs to handle orderbook reset and orderbook snapshot
-retriggering with correct sequencing
+retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
 
 (2) Exchange Stream websocket failure states.
 

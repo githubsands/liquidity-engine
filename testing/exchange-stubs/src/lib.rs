@@ -146,7 +146,7 @@ impl ExchangeServer {
                     "failed to create binance object",
                 )));
             }
-            obj[0].e = 0.0;
+            obj[0].e = "".to_string();
             let obj_text = to_string(&obj[0])?;
             info!("sending object to ws client");
             if let Some(depth_sink) = &mut self.depth_sink {
@@ -180,7 +180,7 @@ impl ExchangeServer {
             })
             .collect();
         vec![WSDepthUpdateBinance {
-            e: 0.0,
+            e: "".to_string(),
             E: 0.0,
             s: 0.0,
             U: 0.0,

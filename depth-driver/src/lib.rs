@@ -78,6 +78,8 @@ impl DepthDriver {
         Ok(())
     }
 
+    // run_streams is the main driver the entire program that continously polls websocket depths from
+    // N exchanges and also handles orderbook rebuilds
     pub async fn run_streams(&mut self, ctx: &mut Context) -> Result<(), ErrorHotPath> {
         let inner_trigger = &mut self.orderbook_snapshot_trigger;
         let mut exchanges: Vec<*mut Exchange> = vec![];
@@ -100,10 +102,12 @@ impl DepthDriver {
                     // implemented within the orderbook. This future handles orderbook rebuilds.
                         _ = inner_trigger.changed()=> {
                             // send snapshot trigger to our N exchange streams
-                            // this sets a streams run function to grabs a http depth load from multiplie exchanges, and buffers
+                            // this sets a streams run function to grab a http depth load from multiplie exchanges, and buffers
                             // the websocket depths.
                             let _ = self.exchange_snapshot_trigger.send(());
                         }
+                        // this future here polls each exchange's websocket as usual
+                        // TODO: Handle error conditions
                         _ = streams.next() => {}
                         _ = ctx.done() => {
                             return Ok(());
