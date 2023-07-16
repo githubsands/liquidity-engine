@@ -1980,7 +1980,6 @@ dependencies = [
  "thin_str",
  "thincollections",
  "tokio 1.29.1",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "tracing-test",

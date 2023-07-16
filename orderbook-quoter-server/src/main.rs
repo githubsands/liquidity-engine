@@ -111,8 +111,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             panic!("failed to package deals")
         }
     });
-
-    let io_grpc_core = core_ids[1];
+    // let io_grpc_core = core_ids[1];
     let config_clone = config.clone();
     let t3 = thread::spawn(move || {
         info!("starting grpc io");
@@ -123,13 +122,12 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .worker_threads(1)
             .build()
             .unwrap();
-        let _ = core_affinity::set_for_current(io_grpc_core);
+        // let _ = core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
         grpc_io_handler.spawn(async move {
             let quoter_grpc_server = OrderBookQuoterServer::new(deal_consumer);
             let grpc_listener = Server::builder()
-                .add_service(QuoterServer::new(quoter_grpc_server.clone())) // pb generated QuotedServer consumes our
-                // type OrderBookQuoterServer
+                .add_service(QuoterServer::new(quoter_grpc_server.clone()))
                 .serve(
                     config_clone
                         .grpc_server
@@ -193,29 +191,6 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
 
-fn match_for_io_error(err_status: &Status) -> Option<&std::io::Error> {
-    let mut err: &(dyn Error + 'static) = err_status;
-
-    loop {
-        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-            return Some(io_err);
-        }
-
-        // h2::Error do not expose std::io::Error with `source()`
-        // https://github.com/hyperium/h2/pull/462
-        if let Some(h2_err) = err.downcast_ref::<h2::Error>() {
-            if let Some(io_err) = h2_err.get_io() {
-                return Some(io_err);
-            }
-        }
-
-        err = match err.source() {
-            Some(err) => err,
-            None => return None,
-        };
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct OrderBookQuoterServer {
     deals_consumer: Arc<Mutex<TokioReceiver<Deals>>>,
@@ -260,8 +235,6 @@ impl OrderBookQuoterServer {
     }
 }
 
-use std::time::Duration;
-
 #[tonic::async_trait]
 impl pb::quoter_server::Quoter for OrderBookQuoterServer {
     type ServerStreamingQuoterStream = ResponseStream;
@@ -270,26 +243,13 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
         &self,
         req: Request<QuoterRequest>,
     ) -> QuoterResult<Self::ServerStreamingQuoterStream> {
-        println!("EchoServer::server_streaming_echo");
-        println!("\tclient connected from: {:?}", req.remote_addr());
-
-        // creating infinite stream with requested message
-        let repeat = std::iter::repeat(QuoterResponse {
-            bid_deals: vec![],
-            spread: 10,
-            ask_deals: vec![],
-        });
-        let mut mock_stream =
-            Box::pin(tokio_stream::iter(repeat).throttle(Duration::from_millis(200)));
+        info!("\tclient connected from: {:?}", req.remote_addr());
 
         let consumer = self.quote_broadcaster.subscribe();
         let mut quote_stream = Box::pin(tokio_stream::wrappers::BroadcastStream::new(consumer));
-        let (client_response_producer, client_response_consumer) =
-            mpsc_channel::<Result<QuoterResponse, Status>>(1000);
 
         let (tx, rx) = mpsc::channel(128);
         tokio::spawn(async move {
-            // while let Some(quote) = mock_stream.next().await {
             while let Some(quote_result) = quote_stream.next().await {
                 match quote_result {
                     Ok(quote) => {
@@ -308,7 +268,7 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
                     }
                 }
             }
-            println!("\tclient disconnected");
+            info!("\tclient disconnected");
         });
 
         let output_stream = ReceiverStream::new(rx);
@@ -316,40 +276,4 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
             Box::pin(output_stream) as Self::ServerStreamingQuoterStream
         ))
     }
-
-    /*
-    fn server_streaming_quoter(
-        &mut self,
-        req: Request<QuoterRequest>,
-    )  -> Result<tonic::Response<Self::ServerStreamingQuoterStream>, tonic::Status> {
-        println!("\tclient connected from: {:?}", req.remote_addr());
-        let consumer = self.quote_broadcaster.subscribe();
-        let (client_response_producer, client_response_consumer) =
-            mpsc_channel::<Result<QuoterResponse, Status>>(1000);
-        let mut quote_stream = tokio_stream::wrappers::BroadcastStream::new(consumer);
-        let output_stream = ReceiverStream::new(client_response_consumer);
-        let input_stream = client_response_producer;
-
-        // 1. receive quote from upstream componenets through quote_grpc_stream
-        // 2. forward quote to the client
-        // 3. receive a quoter response and status back from the client
-        tokio::spawn(async move {
-            while let Some(broadcast_receiver_result) = quote_stream.next().await {
-                match broadcast_receiver_result {
-                    Ok(quote) => match input_stream.send(Result::<_, Status>::Ok(quote)).await {
-                        Ok(_) => {
-                            info!("sending quote to client");
-                        }
-                        Err(_quote) => break,
-                    },
-                    Err(_) => continue,
-                }
-            }
-            println!("\tclient disconnected");
-        });
-        Ok(Response::new(
-            Box::pin(output_stream) as Self::ServerStreamingQuoterStream
-        ))
-    }
-    */
 }
