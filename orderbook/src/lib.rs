@@ -3,16 +3,21 @@ use crossbeam_channel::Sender;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use std::time::Duration;
-use tokio::sync::mpsc::Sender as TokioSender;
-use tokio::sync::watch::{
-    channel as watchChannel, Receiver as watchReceiver, Sender as WatchSender,
+use tokio::sync::mpsc::{
+    channel as AsyncChannel, Receiver as TokioReceiver, Sender as TokioSender,
 };
+
+pub mod pb {
+    tonic::include_proto!("lib"); // lib (lib.rs) is the name where our generated proto is within
+                                  // the OUR_DIR environmental variable.  be aware that we must
+                                  // export OUT_DIR with the path of our generated proto stubs
+                                  // before this program can correctly compile
+}
+
+use pb::QuoterResponse;
 
 use std::cell::Cell;
 use std::thread;
-
-use config::{read_yaml_config, Config};
-use std::path::PathBuf;
 
 use std::cell::UnsafeCell;
 use std::hash::Hash;
@@ -30,9 +35,6 @@ use ring_buffer::RingBuffer;
 use tracing::{debug, info, warn};
 
 use io_context::Context;
-
-use lazy_static::lazy_static;
-use std::env::var;
 
 struct AtomicMap<K, V>
 where
@@ -192,6 +194,7 @@ pub struct OrderBook {
 
     tick_size: f64,
     deal_producer: TokioSender<Deals>,
+    quote_broadcaster: broadcastSender<QuoterResponse>,
     send_deals: bool,
 }
 
@@ -199,9 +202,10 @@ fn round(num: f64, place: f64) -> f64 {
     (num * place).round() / (place)
 }
 
+use tokio::sync::broadcast::Sender as broadcastSender;
 impl OrderBook {
     pub fn new(
-        deal_producer: TokioSender<Deals>,
+        quote_broadcaster: broadcastSender<QuoterResponse>,
         config: &OrderbookConfig,
     ) -> (OrderBook, Sender<DepthUpdate>) {
         let (asks, bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
@@ -210,6 +214,8 @@ impl OrderBook {
                 config.mid_price as f64,
                 config.depth as f64,
             );
+        // TODO: Get rid of this
+        let (deal_producer, _) = AsyncChannel::<Deals>(100);
         let (ring_buffer, depth_producers) = RingBuffer::new(&config.ring_buffer);
         let orderbook: OrderBook = OrderBook {
             write_lock: Arc::new(AtomicBool::new(true)),
@@ -235,6 +241,7 @@ impl OrderBook {
 
             tick_size: config.tick_size,
 
+            quote_broadcaster,
             deal_producer,
             send_deals: true,
         };
@@ -759,11 +766,46 @@ impl OrderBook {
                     })
                 });
                 self.write_lock.store(true, Ordering::SeqCst);
+                let deals = traverse_result.unwrap();
+                // TODO: Get rid of send_deals and only use fanout_quotes - this requires updating
+                // the deals test
                 if self.send_deals {
-                    let _ = self.deal_producer.try_send(traverse_result.unwrap());
+                    let _ = self.deal_producer.try_send(deals);
+                } else {
+                    self.fanout_quotes(deals)
                 }
             }
         }
+    }
+
+    #[inline]
+    // TODO: Get rid of heap allocations here - i.e don't use collect
+    fn fanout_quotes(&mut self, deals: Deals) {
+        let vec_asks: Vec<pb::Deal> = deals
+            .asks
+            .into_iter()
+            .map(|preprocessed_deal| pb::Deal {
+                location: preprocessed_deal.l as i32,
+                price: preprocessed_deal.p,
+                quantity: preprocessed_deal.q,
+            })
+            .collect();
+
+        let vec_bids: Vec<pb::Deal> = deals
+            .bids
+            .into_iter()
+            .map(|preprocessed_deal| pb::Deal {
+                location: preprocessed_deal.l as i32,
+                price: preprocessed_deal.p,
+                quantity: preprocessed_deal.q,
+            })
+            .collect();
+
+        self.quote_broadcaster.send(QuoterResponse {
+            ask_deals: vec_asks,
+            bid_deals: vec_bids,
+            spread: (deals.asks[0].p - deals.bids[0].p) as i32,
+        });
     }
 
     fn traverse_asks(&self) -> Result<[Deal; 10], ErrorHotPath> {
@@ -867,13 +909,16 @@ mod tests {
     use std::thread;
     use test_log::test;
     use testing_traits::ConsumerDefault;
+    use tokio::sync::broadcast::{channel as broadcastChannel, Sender as broadcastSender};
     use tokio::sync::mpsc::{channel as asyncChannel, Sender as asyncProducer};
+    use tokio::sync::watch::{channel as watchChannel, Receiver as watchReceiver};
     use tokio::time::Duration;
     use tracing::info;
     use tracing_test::traced_test;
 
     impl<'a> ConsumerDefault<'a, OrderBook, DepthUpdate> for OrderBook {
         fn consumer_default() -> (Box<Self>, Sender<DepthUpdate>) {
+            let (quote_broadcaster, _) = broadcastChannel(10);
             let (depth_trigger, trigger_receiver) = watchChannel(());
             let tick_size: f64 = 0.01;
             let mid_level: f64 = 2700.0;
@@ -908,6 +953,7 @@ mod tests {
 
                 tick_size: 0.01,
 
+                quote_broadcaster,
                 deal_producer,
                 send_deals: false,
             };
@@ -943,7 +989,7 @@ mod tests {
         let depth = 5000.0;
         // 1. test that orderbook was built with appropriate price levels given the tick size, mid
         //    level, and depth
-        let (mut asks, mut bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
+        let (asks, bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
             OrderBook::build_orderbook(tick_size, mid_level, depth);
         info!("max ask: {}", max_ask_level);
         info!("min ask: {}", min_ask_level);
