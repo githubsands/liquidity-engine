@@ -60,7 +60,7 @@ impl Exchange {
         let json_obj_binance = serde_json::json!({
             "method": "SUBSCRIBE",
             "params": [
-                "btcusdt@depth",
+                "btcusdt@depth5",
             ],
             "id": 1
         });

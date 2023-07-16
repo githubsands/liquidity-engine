@@ -95,13 +95,16 @@ impl Display for BinanceDepthUpdate {
 pub struct WSDepthUpdateBinance {
     #[serde(skip)]
     pub e: String,
-    #[serde(deserialize_with = "as_f64")]
+    #[serde(skip)]
+    // #[serde(deserialize_with = "as_f64")]
     pub E: f64,
     #[serde(skip)]
     pub s: f64,
-    #[serde(deserialize_with = "as_f64")]
+    // #[serde(deserialize_with = "as_f64")]
+    #[serde(skip)]
     pub U: f64,
-    #[serde(deserialize_with = "as_f64")]
+    // #[serde(deserialize_with = "as_f64")]
+    #[serde(skip)]
     pub u: f64,
     pub b: Vec<BinanceDepthUpdate>, // todo: verify
     pub a: Vec<BinanceDepthUpdate>,
