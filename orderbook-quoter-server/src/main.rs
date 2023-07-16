@@ -22,7 +22,7 @@ use tokio::sync::mpsc::{
 
 use tokio::sync::mpsc;
 
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 
 use pb::{QuoterRequest, QuoterResponse};
 
@@ -193,6 +193,29 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
 
+fn match_for_io_error(err_status: &Status) -> Option<&std::io::Error> {
+    let mut err: &(dyn Error + 'static) = err_status;
+
+    loop {
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return Some(io_err);
+        }
+
+        // h2::Error do not expose std::io::Error with `source()`
+        // https://github.com/hyperium/h2/pull/462
+        if let Some(h2_err) = err.downcast_ref::<h2::Error>() {
+            if let Some(io_err) = h2_err.get_io() {
+                return Some(io_err);
+            }
+        }
+
+        err = match err.source() {
+            Some(err) => err,
+            None => return None,
+        };
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBookQuoterServer {
     deals_consumer: Arc<Mutex<TokioReceiver<Deals>>>,
@@ -256,19 +279,31 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
             spread: 10,
             ask_deals: vec![],
         });
-        let mut stream = Box::pin(tokio_stream::iter(repeat).throttle(Duration::from_millis(200)));
+        let mut mock_stream =
+            Box::pin(tokio_stream::iter(repeat).throttle(Duration::from_millis(200)));
 
-        // spawn and channel are required if you want handle "disconnect" functionality
-        // the `out_stream` will not be polled after client disconnect
+        let consumer = self.quote_broadcaster.subscribe();
+        let mut quote_stream = Box::pin(tokio_stream::wrappers::BroadcastStream::new(consumer));
+        let (client_response_producer, client_response_consumer) =
+            mpsc_channel::<Result<QuoterResponse, Status>>(1000);
+
         let (tx, rx) = mpsc::channel(128);
         tokio::spawn(async move {
-            while let Some(item) = stream.next().await {
-                match tx.send(Result::<_, Status>::Ok(item)).await {
-                    Ok(_) => {
-                        // item (server response) was queued to be send to client
+            // while let Some(quote) = mock_stream.next().await {
+            while let Some(quote_result) = quote_stream.next().await {
+                match quote_result {
+                    Ok(quote) => {
+                        match tx.send(Result::<_, Status>::Ok(quote)).await {
+                            Ok(_) => {
+                                // item (server response) was queued to be send to client
+                            }
+                            Err(_item) => {
+                                // output_stream was build from rx and both are dropped
+                                break;
+                            }
+                        }
                     }
-                    Err(_item) => {
-                        // output_stream was build from rx and both are dropped
+                    Err(_) => {
                         break;
                     }
                 }

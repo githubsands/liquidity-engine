@@ -1980,6 +1980,7 @@ dependencies = [
  "thin_str",
  "thincollections",
  "tokio 1.29.1",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "tracing-test",
@@ -1998,6 +1999,7 @@ dependencies = [
  "crossbeam-channel",
  "depth-driver",
  "futures 0.3.28",
+ "h2",
  "internal-objects",
  "io-context",
  "mpsc",
@@ -3319,6 +3321,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio 1.29.1",
+ "tokio-util",
 ]
 
 [[package]]
