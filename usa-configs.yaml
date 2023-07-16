@@ -9,7 +9,7 @@ exchanges:
     ws_uri: "wss://stream.binance.us:9443/ws"
     ws_poll_rate_milliseconds: 95
     ws_presequenced_depth_buffer: 4000
-    depth: 5000
+    depth: 100
     buffer_size: 2048
     watched_pair: "BTCUSDT"
   - client_name: "binance_usa_2"
@@ -21,14 +21,14 @@ exchanges:
     ws_uri: "wss://stream.binance.us:9443/ws"
     ws_poll_rate_milliseconds: 95
     ws_presequenced_depth_buffer: 4000
-    depth: 5000
+    depth: 100
     buffer_size: 2048
     watched_pair: "BTCUSDT"
 orderbook:
   exchange_count: 2
-  depth: 100000
+  depth: 150000
   tick_size: 0.01
-  mid_price: 30400.50
+  mid_price: 30200.29
   ticker: "BTCUSDT"
   ring_buffer:
     ring_buffer_size: 1024

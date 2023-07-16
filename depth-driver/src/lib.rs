@@ -85,35 +85,33 @@ impl DepthDriver {
         info!("running streams");
         let inner_trigger = &mut self.orderbook_snapshot_trigger;
         let mut exchanges: Vec<*mut Exchange> = vec![];
-        let mut streams = FuturesOrdered::new();
+        // let mut streams = FuturesOrdered::new();
         for exchange in &mut self.exchanges {
             exchanges.push(exchange.as_ref().as_ptr())
         }
 
+        /*
         unsafe {
             for stream in exchanges {
                 streams.push_back(stream.as_mut().unwrap().stream_depths())
             }
         }
+        */
 
-        pin_mut!(streams);
+        // pin_mut!(streams);
 
         loop {
+            info!("waiting for future");
             tokio::select! {
                     // TODO: This may not rebuild orderbook correctly but the trigger currently is not
                     // implemented within the orderbook. This future handles orderbook rebuilds.
-                        _ = inner_trigger.changed()=> {
+                        // _ = inner_trigger.changed()=> {
                             // send snapshot trigger to our N exchange streams
                             // this sets a streams run function to grab a http depth load from multiplie exchanges, and buffers
                             // the websocket depths.
-                            let _ = self.exchange_snapshot_trigger.send(());
-                        }
-                        // this future here polls each exchange's websocket as usual
-                        // TODO: Handle error conditions
-                        _ = streams.next() => {
-                            info!("streaming")
-                        }
-
+                            // let _ = self.exchange_snapshot_trigger.send(());
+                        _ = unsafe {exchanges[0].as_mut().unwrap().stream_depths() } => {}
+                        _ = unsafe {exchanges[1].as_mut().unwrap().stream_depths() } => {}
                         _ = ctx.done() => {
                             return Ok(());
                         }

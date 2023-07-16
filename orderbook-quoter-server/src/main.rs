@@ -106,7 +106,10 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let mut orderbook_clone = orderbook.clone();
     let t2 = thread::spawn(move || {
         info!("starting orderbook, deal packer, reader thread");
-        _ = orderbook_clone.package_deals(&package_deals_ctx);
+        let package_deals = orderbook_clone.package_deals(&package_deals_ctx);
+        if package_deals.is_err() {
+            panic!("failed to package deals")
+        }
     });
 
     let io_grpc_core = core_ids[1];

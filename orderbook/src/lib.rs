@@ -236,7 +236,7 @@ impl OrderBook {
             tick_size: config.tick_size,
 
             deal_producer,
-            send_deals: false,
+            send_deals: true,
         };
         (orderbook, depth_producers)
     }
@@ -252,6 +252,7 @@ impl OrderBook {
         f64,
         f64,
     ) {
+        info!("building orderbook please wait");
         // building ask side
         let mut asks: AtomicMap<OrderedFloat<f64>, Level<LiquidityNode>> = AtomicMap::new();
         let mut current_level = mid_level;
@@ -328,18 +329,6 @@ impl OrderBook {
             max_bid_level as f64,
             min_bid_level as f64,
         );
-    }
-
-    #[inline]
-    pub fn consume_depths(&mut self) -> Result<(), ErrorHotPath> {
-        let buffer_consume_result = self.ring_buffer.consume();
-        match buffer_consume_result {
-            Ok(()) => {
-                return Ok(());
-            }
-            // TODO: Work out this buffer error
-            Err(_) => return Err(ErrorHotPath::OrderBook("buffer error".to_string())),
-        }
     }
 
     #[inline]
@@ -759,7 +748,7 @@ impl OrderBook {
             }
             while self.read_lock.load(Ordering::Relaxed) {
                 self.read_lock.store(false, Ordering::SeqCst);
-                let mut traverse_result: Result<Deals, ErrorHotPath> = thread::scope(|s| {
+                let traverse_result: Result<Deals, ErrorHotPath> = thread::scope(|s| {
                     let ask_traverser = s.spawn(|| self.traverse_asks());
                     let bid_traverser = s.spawn(|| self.traverse_bids());
                     let asks = ask_traverser.join();
@@ -789,8 +778,8 @@ impl OrderBook {
             if current_level < self.max_ask_level + self.tick_size {
                 let current_level_asks = self.asks.get(&OrderedFloat(current_level));
                 if current_level_asks.is_none() {
-                    warn!("level {} does not exist in the BIDS book", current_level);
-                    // TODO: Create its own error for the level not being allocated
+                    warn!("level {} does not exist in the ASKS book", current_level);
+                    // TODO: Create error for the level not being allocated
                     return Err(ErrorHotPath::OrderBookMaxTraversedReached);
                 }
                 let mut liquid_asks_levels = current_level_asks
@@ -835,7 +824,7 @@ impl OrderBook {
                 let current_level_bids = self.bids.get(&OrderedFloat(current_level));
                 if current_level_bids.is_none() {
                     warn!("level {} does not exist in the BIDS book", current_level);
-                    // TODO: Create its own error for the level not being allocated
+                    // TODO: Create error for the level not being allocated
                     return Err(ErrorHotPath::OrderBookMaxTraversedReached);
                 }
                 let mut liquid_bids_levels = current_level_bids
@@ -2079,7 +2068,6 @@ mod tests {
     };
 
     let expected_deals: Vec<Deals> = vec![e1_deals_expected, e2_deals_expected, e3_deals_expected, e4_deals_expected, e5_deals_expected, e6_deals_expected, e7_deals_expected, e8_deals_expected];
-    let mut actual_deals: Vec<Deals>  = vec![];
 
     let mut deal_counter = 0;
     while deal_counter < expected_deals.len() {

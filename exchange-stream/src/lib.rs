@@ -164,6 +164,7 @@ impl ExchangeStream {
         if let Some(trigger) = &mut self.snapshot_trigger {
             tokio::select! {
                     _ = trigger.changed()=> {
+                        info!("pulling websocket");
                         self.buffer_websocket_depths = true;
                         let mut pull_retry_count = 0;
                         while pull_retry_count < self.pull_retry_count {
@@ -203,6 +204,7 @@ impl ExchangeStream {
                 //
                 // TODO: Define these errors explicitly - they are not all ExchangeWSErrors
                 _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
+                    info!("streaming depths after timer");
                     if let Some(stream_poll_state) = self.next().await {
                 match stream_poll_state {
                     WSStreamState::Success => return Ok(()),
@@ -282,6 +284,7 @@ impl ExchangeStream {
             Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
                 (snapshot_response, 1) => {
                     if snapshot_response.status() != 200 {
+                        // TODO: Get rid of this boxed error
                         return Err(Box::new(ErrorHotPath::ExchangeStreamSnapshot(
                             "failed to get snapshot through http. received error code: {}"
                                 .to_string(),

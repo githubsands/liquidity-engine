@@ -92,6 +92,7 @@ impl Exchange {
     }
 
     pub async fn stream_depths(&mut self) -> Result<(), ErrorHotPath> {
+        info!("streaming depths");
         self.inner.run().await;
         Ok(())
     }
