@@ -26,12 +26,12 @@ exchanges:
     watched_pair: "BTCUSDT"
 orderbook:
   exchange_count: 2
-  depth: 100
+  depth: 25000
   tick_size: 0.01
-  mid_price: 30200.29
+  mid_price: 30300.29
   ticker: "BTCUSDT"
   ring_buffer:
     ring_buffer_size: 1024
     channel_buffer_size: 512
 grpc_server:
-  host_uri: "http://[::1]:5000"
+  host_uri: "[::1]:9090"

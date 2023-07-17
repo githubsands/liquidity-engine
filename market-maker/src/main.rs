@@ -5,6 +5,7 @@ pub mod pb {
 use futures::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use std::env;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::process;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -45,9 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(0);
     }
     */
-    let mut client = QuoterClient::connect(env::var("ORDERBOOK_QUOTER_SERVER_URI").unwrap())
-        .await
-        .unwrap();
+    // let mut client = QuoterClient::connect(env::var("ORDERBOOK_QUOTER_SERVER_URI").unwrap())
+    //
+    let mut client = QuoterClient::connect("http://[::1]:9090").await.unwrap();
 
     let market_maker = MarketMaker::new();
     market_maker.stream_quotes(&mut client, 50000).await;
