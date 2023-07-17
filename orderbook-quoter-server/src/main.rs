@@ -114,7 +114,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             panic!("failed to package deals")
         }
     });
-    // let io_grpc_core = core_ids[1];
+    let io_grpc_core = core_ids[1];
     let config_clone = config.clone();
     let t3 = thread::spawn(move || {
         info!("starting grpc io");
@@ -125,24 +125,29 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .worker_threads(1)
             .build()
             .unwrap();
-        // let _ = core_affinity::set_for_current(io_grpc_core);
+        let _ = core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
-        grpc_io_handler.spawn(async move {
+        let grpc_server = grpc_io_handler.spawn(async move {
             let quoter_grpc_server = OrderBookQuoterServer::new(quotes_producer);
-            let grpc_listener = Server::builder()
+            Server::builder()
                 .add_service(QuoterServer::new(quoter_grpc_server.clone()))
                 .serve(
                     config_clone
                         .grpc_server
                         .host_uri
-                        .parse()
-                        .expect("could not parse grpc address from config"),
-                );
-            grpc_listener.await;
+                        .to_socket_addrs()
+                        .unwrap()
+                        .next()
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            info!("shutting down");
         });
+        async_grpc_io_rt.block_on(grpc_server);
     });
 
-    let io_ws_core = core_ids[3];
+    let io_ws_core = core_ids[2];
     let depth_producer = depth_producer.clone();
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();
     let config_clone = config.clone();

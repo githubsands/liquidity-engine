@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(0);
     }
     */
-    let mut client = QuoterClient::connect(orderbook_quoter_server_uri)
+    let mut client = QuoterClient::connect(env::var("ORDERBOOK_QUOTER_SERVER_URI").unwrap())
         .await
         .unwrap();
 
