@@ -68,8 +68,9 @@ fn main() {
     info!("config path given: {:?}", config_path);
     let file = PathBuf::from(config_path);
     let config_file = read_yaml_config(file);
-    info!("config loaded succesfully");
-
+    if config_file.is_err() {
+        panic!("failed to load config {:?}", config_file)
+    }
     let res = orderbook_quoter_server(config_file.unwrap());
     match res {
         Ok(_) => info!("shutting down orderbook_quoter_server"),

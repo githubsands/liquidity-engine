@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 use config::ExchangeConfig;
 use market_objects::{
     DepthUpdate, HTTPSnapShotDepthResponseBinance, HTTPSnapShotDepthResponseByBit,
-    WSDepthUpdateBinance, WSDepthUpdateByBit,
+    WSDepthUpdateBinance, WSDepthUpdateByBit, WSOrderBookUpdatesBinance,
 };
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
@@ -419,17 +419,21 @@ impl Stream for ExchangeStream {
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
                         }
-                        if let Ok(depth_update) = WSDepthUpdateBinance::try_from(ws_message) {
-                            let depths = depth_update.depths(1);
+                        info!("DEBUG: {:?}", ws_message);
+                        if let Ok(orderbook_update) =
+                            WSOrderBookUpdatesBinance::try_from(ws_message)
+                        {
+                            let depths = orderbook_update.depths(1);
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
                                 for depth in woven_depths {
                                     this.buffer.push(depth);
                                 }
                                 continue;
-                            }
-                            for depth in woven_depths {
-                                this.buffer.push(depth);
+                            } else {
+                                for depth in woven_depths {
+                                    this.buffer.push(depth);
+                                }
                             }
                         } else {
                             warn!("failed to deserialize the object.");
@@ -441,17 +445,21 @@ impl Stream for ExchangeStream {
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
                         }
-                        if let Ok(depth_update) = WSDepthUpdateBinance::try_from(ws_message) {
-                            let depths = depth_update.depths(2);
+                        info!("DEBUG: {:?}", ws_message);
+                        if let Ok(orderbook_update) =
+                            WSOrderBookUpdatesBinance::try_from(ws_message)
+                        {
+                            let depths = orderbook_update.depths(1);
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
                                 for depth in woven_depths {
                                     this.buffer.push(depth);
                                 }
                                 continue;
-                            }
-                            for depth in woven_depths {
-                                this.buffer.push(depth);
+                            } else {
+                                for depth in woven_depths {
+                                    this.buffer.push(depth);
+                                }
                             }
                         } else {
                             warn!("failed to deserialize the object.");

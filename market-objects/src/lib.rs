@@ -32,34 +32,77 @@ impl Default for DepthUpdate {
     }
 }
 
+// NOTE: This data structure is what is released when you specify a
+// count of N when subscribing
+/*
 #[allow(non_snake_case)]
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
-pub struct WSOrderBookUpdateBinance {
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct WSOrderBookUpdateBinanceSingleton {
+    pub u: String, // order book updateId
+    pub s: String,
+    #[serde(deserialize_with = "as_f64")]
     pub b: f64, // best bid price
+    #[serde(deserialize_with = "as_f64")]
     pub B: f64, // best bid qty
+    #[serde(deserialize_with = "as_f64")]
     pub a: f64, // best ask price
+    #[serde(deserialize_with = "as_f64")]
     pub A: f64, // best ask qty
+}
+*/
+
+#[allow(non_snake_case)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct WSOrderBookUpdateBinanceSingleton {
+    #[serde(deserialize_with = "as_f64")]
+    pub p: f64, // best bid price
+    #[serde(deserialize_with = "as_f64")]
+    pub q: f64, // best bid qty
+}
+
+#[allow(non_snake_case)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct WSOrderBookUpdatesBinance {
+    pub bids: Vec<WSOrderBookUpdateBinanceSingleton>,
+    pub asks: Vec<WSOrderBookUpdateBinanceSingleton>,
 }
 
 /// OrderbookUpdateBinance returns a bid and a ask order
-impl WSOrderBookUpdateBinance {
-    pub fn order(self) -> (DepthUpdate, DepthUpdate) {
-        (
-            DepthUpdate {
-                k: 0,
-                p: self.b,
-                q: self.B,
-                l: 1,
-                s: false,
-            },
-            DepthUpdate {
-                k: 1,
-                p: self.a,
-                q: self.A,
-                l: 1,
-                s: false,
-            },
-        )
+impl WSOrderBookUpdatesBinance {
+    pub fn depths(
+        self,
+        location: u8,
+    ) -> (
+        impl Iterator<Item = DepthUpdate>,
+        impl Iterator<Item = DepthUpdate>,
+    ) {
+        let bid_updates = self.bids.into_iter().map(move |update| DepthUpdate {
+            k: 0,
+            p: update.p, // Assuming BinanceDepthUpdate has a `price` field
+            q: update.q, // and a `quantity` field
+            l: location,
+            s: false,
+        });
+        let ask_updates = self.asks.into_iter().map(move |update| DepthUpdate {
+            k: 1,
+            p: update.p,
+            q: update.q,
+            l: location,
+            s: false,
+        });
+
+        (bid_updates, ask_updates)
+    }
+}
+
+impl From<Message> for WSOrderBookUpdatesBinance {
+    fn from(value: Message) -> Self {
+        match value {
+            Message::Text(text) => {
+                serde_json::from_str(&text).expect("Failed to parse the message")
+            }
+            _ => panic!("Expected Text WebSocket Message"),
+        }
     }
 }
 
@@ -155,6 +198,7 @@ impl From<Message> for WSDepthUpdateBinance {
         }
     }
 }
+
 impl WSDepthUpdateBinance {
     pub fn depths(
         self,
