@@ -419,6 +419,11 @@ impl Stream for ExchangeStream {
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
                         }
+                        // TODO: ping/pong back
+                        if ws_message.is_pong() || ws_message.is_ping() {
+                            continue;
+                        }
+
                         info!("DEBUG: {:?}", ws_message);
                         if let Ok(orderbook_update) =
                             WSOrderBookUpdatesBinance::try_from(ws_message)
@@ -444,6 +449,10 @@ impl Stream for ExchangeStream {
                             // ignore the NULL message from binance
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
+                        }
+                        // TODO: ping/pong back
+                        if ws_message.is_pong() || ws_message.is_ping() {
+                            continue;
                         }
                         info!("DEBUG: {:?}", ws_message);
                         if let Ok(orderbook_update) =
