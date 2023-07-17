@@ -87,7 +87,10 @@ impl MarketMaker {
             .into_inner();
         let mut stream = stream.take(num);
         while let Some(quote) = stream.next().await {
-            println!("\treceived quote: {}", quote.unwrap().spread);
+            let quote = quote.unwrap();
+            println!("\treceived quote: {}", quote.spread);
+            println!("\treceived quote: {:?}", quote.ask_deals);
+            println!("\treceived quote: {:?}", quote.bid_deals);
         }
     }
 }
