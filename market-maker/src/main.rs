@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("ORDERBOOK_QUOTER_SERVER_URI is not set");
         process::exit(0);
     }
+    /*
     let mut exchange_server_one_uri: String = "".to_string();
     if let Ok(exchange_server_one_uri) = env::var("EXCHANGE_SERVER_1_URI") {
         println!("exchange server 1 uri is: {}", exchange_server_one_uri);
@@ -43,74 +44,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("exchange server 2 uri is not set");
         process::exit(0);
     }
+    */
     let mut client = QuoterClient::connect(orderbook_quoter_server_uri)
         .await
         .unwrap();
-    /*
-    let mut market_maker = MarketMaker::new().stream_quotes(&mut client, 50000).await;
-    market_maker.submit_trades();
-    */
+
+    let market_maker = MarketMaker::new();
+    market_maker.stream_quotes(&mut client, 50000).await;
     Ok(())
 }
 
-struct Exchange {
-    uri: String,
-    order_sink: Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
-    order_stream: Option<SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
-}
-
-impl Exchange {
-    fn new(uri: String) -> Exchange {
-        Exchange {
-            uri: uri,
-            order_sink: None,
-            order_stream: None,
-        }
-    }
-    async fn boot(&mut self) {
-        let (websocket_stream, _) = connect_async("ws://".to_owned() + self.uri.as_str())
-            .await
-            .expect("Failed to connect");
-        let (sink, stream) = websocket_stream.split();
-        self.order_sink = Some(sink);
-        self.order_stream = Some(stream);
-    }
-    async fn receive_order_stream(&mut self) {
-        while let Some(order_feedback) = self.order_stream.as_mut().unwrap().next().await {}
-    }
-    async fn send_order_transaction(
-        &mut self,
-    ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
-        self.order_sink
-            .as_mut()
-            .unwrap()
-            .send(Message::Text("wip".to_string()));
-        Ok(())
-    }
-}
-
-// TODO: We need to get feedback from the exchange i.e status of our orders so add in a ws reader
-// here
 pub struct MarketMaker {
     agent: String,
-    exchanges: Vec<Exchange>,
-    quote_producer: Sender<QuoterResponse>,
-    quote_consumer: Receiver<QuoterResponse>,
+    // exchanges: Vec<Exchange>,
+    // quote_producer: Sender<QuoterResponse>,
+    // quote_consumer: Receiver<QuoterResponse>,
 }
 
 impl MarketMaker {
-    fn new(exchange_uris: Vec<String>) -> Self {
+    fn new() -> Self {
+        /*
         let (producer, consumer) = channel(1000);
         let mut exchanges: Vec<Exchange> = vec![];
         for uri in exchange_uris {
             let exchange = Exchange::new(uri);
             exchanges.push(exchange);
         }
+        */
         MarketMaker {
             agent: "market-maker-strategy-tbd".to_string(),
-            exchanges,
-            quote_producer: producer,
-            quote_consumer: consumer,
+            //   exchanges,
+            // quote_producer: producer,
+            // quote_consumer: consumer,
         }
     }
     async fn stream_quotes(self, client: &mut QuoterClient<Channel>, num: usize) {

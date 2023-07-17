@@ -37,3 +37,6 @@ config = { path = "config"}
 name = "orderbook-quoter-server"
 path = "orderbook-quoter-server/src/main.rs"
 
+[[bin]]
+name = "market-maker"
+path = "market-maker/src/main.rs"
