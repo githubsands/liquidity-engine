@@ -195,7 +195,7 @@ pub struct OrderBook {
     tick_size: f64,
     deal_producer: TokioSender<Deals>,
     quote_broadcaster: broadcastSender<QuoterResponse>,
-    send_deals: bool,
+    pub send_deals: bool,
 }
 
 fn round(num: f64, place: f64) -> f64 {

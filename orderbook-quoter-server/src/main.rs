@@ -90,9 +90,11 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
 
     // TODO: Handle the snapshot_depth_producer
     let (_, snapshot_depth_consumer) = watchChannel(());
-    let (deal_producer, deal_consumer) = mpsc_channel(10);
     let config = config.clone();
-    let (orderbook, depth_producer) = OrderBook::new(deal_producer, &config.orderbook);
+    let (quotes_producer, _) = tokio::sync::broadcast::channel(16);
+    let (mut orderbook, depth_producer) =
+        OrderBook::new(quotes_producer.clone(), &config.orderbook);
+    orderbook.send_deals = false; // TODO: this will be removed in the future, a hack.
     let orderbook = Box::new(orderbook);
 
     let orderbook_depth_processor_core = core_ids[0];
@@ -125,7 +127,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         // let _ = core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
         grpc_io_handler.spawn(async move {
-            let quoter_grpc_server = OrderBookQuoterServer::new(deal_consumer);
+            let quoter_grpc_server = OrderBookQuoterServer::new(quotes_producer);
             let grpc_listener = Server::builder()
                 .add_service(QuoterServer::new(quoter_grpc_server.clone()))
                 .serve(
@@ -135,7 +137,6 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
                         .parse()
                         .expect("could not parse grpc address from config"),
                 );
-            quoter_grpc_server.clone().fanout_quotes().await;
             grpc_listener.await;
         });
     });
@@ -193,44 +194,16 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> 
 
 #[derive(Debug, Clone)]
 pub struct OrderBookQuoterServer {
-    deals_consumer: Arc<Mutex<TokioReceiver<Deals>>>,
     quote_broadcaster: tokio::sync::broadcast::Sender<QuoterResponse>,
 }
 
 impl OrderBookQuoterServer {
-    pub fn new(deal_receiver: TokioReceiver<Deals>) -> OrderBookQuoterServer {
+    pub fn new(
+        quote_broadcaster: tokio::sync::broadcast::Sender<orderbook::pb::QuoterResponse>,
+    ) -> OrderBookQuoterServer {
         let (tx, _) = broadcast::channel(16);
         OrderBookQuoterServer {
-            deals_consumer: Arc::new(Mutex::new(deal_receiver)),
             quote_broadcaster: tx,
-        }
-    }
-    pub async fn fanout_quotes(&mut self) {
-        let deals_consumer = self.deals_consumer.clone();
-        while let Ok(deals) = deals_consumer.lock().await.try_recv() {
-            self.quote_broadcaster.send(QuoterResponse {
-                ask_deals: deals
-                    .asks
-                    .into_iter()
-                    .map(|preprocessed_deal| pb::Deal {
-                        location: preprocessed_deal.l as i32,
-                        price: preprocessed_deal.p,
-                        quantity: preprocessed_deal.q,
-                    })
-                    .collect(),
-
-                bid_deals: deals
-                    .bids
-                    .into_iter()
-                    .map(|preprocessed_deal| pb::Deal {
-                        location: preprocessed_deal.l as i32,
-                        price: preprocessed_deal.p,
-                        quantity: preprocessed_deal.q,
-                    })
-                    .collect(),
-
-                spread: (deals.asks[0].p - deals.bids[0].p) as i32,
-            });
         }
     }
 }
