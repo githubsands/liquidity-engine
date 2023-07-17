@@ -26,20 +26,37 @@ use crate::pb::quoter_server::QuoterServer;
 
 use tonic::transport::Server;
 
+use config::{read_yaml_config, Config};
+
 use std::{error::Error, net::ToSocketAddrs, path::PathBuf, thread};
 
 type QuoterResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<pb::QuoterResponse, Status>> + Send>>;
 
+pub async fn run_server(config: &Config, quotes_producer: tokio::sync::broadcast::Sender<Quote>) {
+    let quoter_grpc_server = OrderBookQuoterServer::new(quotes_producer);
+    Server::builder()
+        .add_service(QuoterServer::new(quoter_grpc_server.clone()))
+        .serve(
+            config
+                .grpc_server
+                .host_uri
+                .to_socket_addrs()
+                .unwrap()
+                .next()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBookQuoterServer {
-    quote_broadcaster: tokio::sync::broadcast::Sender<pb::QuoterResponse>,
+    quote_broadcaster: tokio::sync::broadcast::Sender<Quote>,
 }
 
 impl OrderBookQuoterServer {
-    pub fn new(
-        quote_broadcaster: tokio::sync::broadcast::Sender<pb::QuoterResponse>,
-    ) -> OrderBookQuoterServer {
+    pub fn new(quote_broadcaster: tokio::sync::broadcast::Sender<Quote>) -> OrderBookQuoterServer {
         OrderBookQuoterServer {
             quote_broadcaster: quote_broadcaster,
         }
@@ -66,7 +83,33 @@ impl pb::quoter_server::Quoter for OrderBookQuoterServer {
                 info!("sending quote to {:?}", req.remote_addr());
                 match quote_result {
                     Ok(quote) => {
-                        match tx.send(Result::<_, Status>::Ok(quote)).await {
+                        let vec_asks: Vec<pb::Deal> = quote
+                            .ask_deals
+                            .into_iter()
+                            .map(|preprocessed_deal| pb::Deal {
+                                location: preprocessed_deal.l as i32,
+                                price: preprocessed_deal.p,
+                                quantity: preprocessed_deal.q,
+                            })
+                            .collect();
+
+                        let vec_bids: Vec<pb::Deal> = quote
+                            .bid_deals
+                            .into_iter()
+                            .map(|preprocessed_deal| pb::Deal {
+                                location: preprocessed_deal.l as i32,
+                                price: preprocessed_deal.p,
+                                quantity: preprocessed_deal.q,
+                            })
+                            .collect();
+                        match tx
+                            .send(Result::<_, Status>::Ok(QuoterResponse {
+                                ask_deals: vec_asks,
+                                bid_deals: vec_bids,
+                                spread: quote.spread as i32,
+                            }))
+                            .await
+                        {
                             Ok(_) => {
                                 info!("grpc non error")
                                 // item (server response) was queued to be send to client

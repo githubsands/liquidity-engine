@@ -7,15 +7,6 @@ use tokio::sync::mpsc::{
     channel as AsyncChannel, Receiver as TokioReceiver, Sender as TokioSender,
 };
 
-pub mod pb {
-    tonic::include_proto!("lib"); // lib (lib.rs) is the name where our generated proto is within
-                                  // the OUR_DIR environmental variable.  be aware that we must
-                                  // export OUT_DIR with the path of our generated proto stubs
-                                  // before this program can correctly compile
-}
-
-use pb::QuoterResponse;
-
 use std::cell::Cell;
 use std::thread;
 
@@ -26,11 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use config::OrderbookConfig;
-use internal_objects::{Deal, Deals};
-
+use internal_objects::{Deal, Deals, Quote};
 use market_objects::DepthUpdate;
-
 use quoter_errors::ErrorHotPath;
+
 use ring_buffer::RingBuffer;
 use tracing::{debug, info, warn};
 
@@ -194,8 +184,9 @@ pub struct OrderBook {
 
     tick_size: f64,
     deal_producer: TokioSender<Deals>,
-    quote_broadcaster: broadcastSender<QuoterResponse>,
+    quote_broadcaster: broadcastSender<Quote>,
     pub send_deals: bool,
+    fanout_quotes: bool,
 }
 
 fn round(num: f64, place: f64) -> f64 {
@@ -205,7 +196,7 @@ fn round(num: f64, place: f64) -> f64 {
 use tokio::sync::broadcast::Sender as broadcastSender;
 impl OrderBook {
     pub fn new(
-        quote_broadcaster: broadcastSender<QuoterResponse>,
+        quote_broadcaster: broadcastSender<Quote>,
         config: &OrderbookConfig,
     ) -> (OrderBook, Sender<DepthUpdate>) {
         let (asks, bids, max_ask_level, min_ask_level, max_bid_level, min_bid_level) =
@@ -244,6 +235,7 @@ impl OrderBook {
             quote_broadcaster,
             deal_producer,
             send_deals: true,
+            fanout_quotes: true,
         };
         (orderbook, depth_producers)
     }
@@ -428,11 +420,12 @@ impl OrderBook {
                                 }
                             } else {
                                 self.write_lock.store(false, Ordering::SeqCst);
+                                info!("updating book with update");
                                 if let Err(update_book_err) = self.update_book_depths(depth_update)
                                 {
                                     warn!("failed to update the book: {}", update_book_err)
                                 }
-                                if self.send_deals {
+                                if self.send_deals || self.fanout_quotes {
                                     self.read_lock.store(true, Ordering::SeqCst);
                                 } else {
                                     self.write_lock.store(true, Ordering::SeqCst);
@@ -754,6 +747,7 @@ impl OrderBook {
                 ));
             }
             while self.read_lock.load(Ordering::Relaxed) {
+                info!("packaging deals");
                 self.read_lock.store(false, Ordering::SeqCst);
                 let traverse_result: Result<Deals, ErrorHotPath> = thread::scope(|s| {
                     let ask_traverser = s.spawn(|| self.traverse_asks());
@@ -770,9 +764,12 @@ impl OrderBook {
                 // TODO: Get rid of send_deals and only use fanout_quotes - this requires updating
                 // the deals test
                 if self.send_deals {
+                    info!("deals are {:?}", deals);
+                    let result = self.fanout_quotes(deals);
+                    if result.is_err() {
+                        panic!("failed toooo");
+                    }
                     let _ = self.deal_producer.try_send(deals);
-                } else {
-                    self.fanout_quotes(deals)
                 }
             }
         }
@@ -780,32 +777,18 @@ impl OrderBook {
 
     #[inline]
     // TODO: Get rid of heap allocations here - i.e don't use collect
-    fn fanout_quotes(&mut self, deals: Deals) {
-        let vec_asks: Vec<pb::Deal> = deals
-            .asks
-            .into_iter()
-            .map(|preprocessed_deal| pb::Deal {
-                location: preprocessed_deal.l as i32,
-                price: preprocessed_deal.p,
-                quantity: preprocessed_deal.q,
-            })
-            .collect();
-
-        let vec_bids: Vec<pb::Deal> = deals
-            .bids
-            .into_iter()
-            .map(|preprocessed_deal| pb::Deal {
-                location: preprocessed_deal.l as i32,
-                price: preprocessed_deal.p,
-                quantity: preprocessed_deal.q,
-            })
-            .collect();
-
-        self.quote_broadcaster.send(QuoterResponse {
-            ask_deals: vec_asks,
-            bid_deals: vec_bids,
-            spread: (deals.asks[0].p - deals.bids[0].p) as i32,
+    fn fanout_quotes(&mut self, deals: Deals) -> Result<(), ErrorHotPath> {
+        info!("fanning out deal {:?}", deals);
+        let broadcast_result = self.quote_broadcaster.send(Quote {
+            ask_deals: deals.asks,
+            bid_deals: deals.bids,
+            spread: deals.asks[0].p - deals.bids[0].p,
         });
+        match broadcast_result {
+            Ok(clients) => info!("succesfully sent a quote to {:?} clients.", clients),
+            Err(send_error) => warn!("failed to send quotes to a client: {:?}", send_error),
+        }
+        Ok(())
     }
 
     fn traverse_asks(&self) -> Result<[Deal; 10], ErrorHotPath> {

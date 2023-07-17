@@ -20,11 +20,12 @@ core_affinity = "0.8.0"
 serde = "1.0.164"
 crossbeam-channel = "0.5.8"
 io-context = "0.2.0"
+mpsc = "0.2.0"
+h2 = "0.3.20"
 
 config = { path = "../config"}
 internal-objects = { path = "../internal-objects"}
 depth-driver = { path = "../depth-driver"}
 orderbook = { path = "../orderbook"}
+quoter-grpc-server = { path = "../quoter-grpc-server" }
 tokio-context = "0.1.3"
-mpsc = "0.2.0"
-h2 = "0.3.20"

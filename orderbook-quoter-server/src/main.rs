@@ -26,9 +26,6 @@ use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 
 use pb::{QuoterRequest, QuoterResponse};
 
-use crate::pb::quoter_server::Quoter;
-use crate::pb::quoter_server::QuoterServer;
-
 use std::{error::Error, net::ToSocketAddrs, path::PathBuf, thread};
 
 use io_context::Context;
@@ -38,14 +35,14 @@ use clap::{App, Arg};
 use tokio::runtime::{Builder, Runtime};
 use tonic::transport::Server;
 
-use config::{read_yaml_config, Config};
 use tracing::{error, info};
 use tracing_subscriber;
 
-use internal_objects::Deals;
-
+use config::{read_yaml_config, Config};
 use depth_driver::DepthDriver;
+use internal_objects::Deals;
 use orderbook::OrderBook;
+use quoter_grpc_server::run_server;
 
 use tokio::sync::watch::channel as watchChannel;
 
@@ -95,7 +92,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let (quotes_producer, _) = tokio::sync::broadcast::channel(16);
     let (mut orderbook, depth_producer) =
         OrderBook::new(quotes_producer.clone(), &config.orderbook);
-    orderbook.send_deals = false; // TODO: this will be removed in the future, a hack.
+    orderbook.send_deals = true; // TODO: this will be removed in the future, a hack.
     let orderbook = Box::new(orderbook);
 
     let orderbook_depth_processor_core = core_ids[0];
@@ -116,6 +113,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     });
     let io_grpc_core = core_ids[1];
     let config_clone = config.clone();
+    let quotes_producer = quotes_producer.clone();
     let t3 = thread::spawn(move || {
         info!("starting grpc io");
         let async_grpc_io_rt = Builder::new_current_thread()
@@ -128,20 +126,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         let _ = core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
         let grpc_server = grpc_io_handler.spawn(async move {
-            let quoter_grpc_server = OrderBookQuoterServer::new(quotes_producer);
-            Server::builder()
-                .add_service(QuoterServer::new(quoter_grpc_server.clone()))
-                .serve(
-                    config_clone
-                        .grpc_server
-                        .host_uri
-                        .to_socket_addrs()
-                        .unwrap()
-                        .next()
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            run_server(&config_clone, quotes_producer).await;
             info!("shutting down");
         });
         async_grpc_io_rt.block_on(grpc_server);
@@ -193,66 +178,4 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     t3.join();
     t4.join();
     Ok(())
-}
-
-type QuoterResult<T> = Result<Response<T>, Status>;
-type ResponseStream = Pin<Box<dyn Stream<Item = Result<QuoterResponse, Status>> + Send>>;
-
-#[derive(Debug, Clone)]
-pub struct OrderBookQuoterServer {
-    quote_broadcaster: tokio::sync::broadcast::Sender<QuoterResponse>,
-}
-
-impl OrderBookQuoterServer {
-    pub fn new(
-        quote_broadcaster: tokio::sync::broadcast::Sender<orderbook::pb::QuoterResponse>,
-    ) -> OrderBookQuoterServer {
-        let (tx, _) = broadcast::channel(16);
-        OrderBookQuoterServer {
-            quote_broadcaster: tx,
-        }
-    }
-}
-
-#[tonic::async_trait]
-impl pb::quoter_server::Quoter for OrderBookQuoterServer {
-    type ServerStreamingQuoterStream = ResponseStream;
-
-    async fn server_streaming_quoter(
-        &self,
-        req: Request<QuoterRequest>,
-    ) -> QuoterResult<Self::ServerStreamingQuoterStream> {
-        info!("\tclient connected from: {:?}", req.remote_addr());
-
-        let consumer = self.quote_broadcaster.subscribe();
-        let mut quote_stream = Box::pin(tokio_stream::wrappers::BroadcastStream::new(consumer));
-
-        let (tx, rx) = mpsc::channel(128);
-        tokio::spawn(async move {
-            while let Some(quote_result) = quote_stream.next().await {
-                match quote_result {
-                    Ok(quote) => {
-                        match tx.send(Result::<_, Status>::Ok(quote)).await {
-                            Ok(_) => {
-                                // item (server response) was queued to be send to client
-                            }
-                            Err(_item) => {
-                                // output_stream was build from rx and both are dropped
-                                break;
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        break;
-                    }
-                }
-            }
-            info!("\tclient disconnected");
-        });
-
-        let output_stream = ReceiverStream::new(rx);
-        Ok(Response::new(
-            Box::pin(output_stream) as Self::ServerStreamingQuoterStream
-        ))
-    }
 }
