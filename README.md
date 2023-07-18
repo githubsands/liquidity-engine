@@ -110,8 +110,7 @@ Future work:
 
 (2) Reduce dynamic memory allocations
 
-(3) Different thread scheme for orderbook reading - currently it's thread spins up child threads for 
-ask and bid traversal. By default this should have a threadpool though so we don't waste time making new threads.
+(3) Seperate bid and ask depth updates into two buffers and write from two different threads rather then one.
 
 (4) Use a decimals or another solution over floats for quantities.
 
