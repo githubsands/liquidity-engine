@@ -4,6 +4,11 @@ name = "orderbook-quoter-server-pkgs"
 publish = false
 version = "0.1.0"
 
+[profile.release]
+codegen-units = 1
+lto = true
+debug = true
+
 [workspace]
 members = [
     "orderbook-quoter-server",
