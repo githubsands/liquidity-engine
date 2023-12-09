@@ -86,11 +86,13 @@ impl MarketMaker {
             .unwrap()
             .into_inner();
         let mut stream = stream.take(num);
+        let mut counter = 0;
         while let Some(quote) = stream.next().await {
             let quote = quote.unwrap();
-            println!("\treceived quote: {}", quote.spread);
-            println!("\treceived quote: {:?}", quote.ask_deals);
-            println!("\treceived quote: {:?}", quote.bid_deals);
+            println!("\t{} received quote: {}", counter, quote.spread);
+            println!("\t{} ASKS: {:?}", counter, quote.ask_deals);
+            println!("\t{} BIDS: {:?}", counter, quote.bid_deals);
+            counter = counter + 1;
         }
     }
 }
