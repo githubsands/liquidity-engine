@@ -11,7 +11,6 @@ debug = true
 
 [workspace]
 members = [
-    "orderbook-quoter-server",
     "quoter-grpc-server",
     "exchange-stream",
     "exchange",
