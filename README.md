@@ -113,25 +113,20 @@ Has 2 states:
 
 (2) Updating the the orderbook with ws depths and then reading the orderbook for best deals
 
-### <span style="color: #00CEC9;">5. Quote GRPC Server</span>
-
-Takes the spread and provides the best ten deals and asks to a grpc client
-
-#### Future work:
-
-TBD
-
 #### Future work:
 
 (1) A state when the orderbook is needs rebuilding if a ExchangeStream websocket connection fails. 
 
-(2) Reduce dynamic memory allocations
+(2) Seperate bid and ask depth updates into two buffers and write from two different threads rather then one.
 
-(3) Seperate bid and ask depth updates into two buffers and write from two different threads rather then one.
+(3) Move each side of the book to their own thread and with exchange streams to keep books in their own
+    threads ... after a depth update a read is done on the same thread
 
 (4) Use fixed library for floats https://docs.rs/fixed/latest/fixed/
 
-(5) Possibly more performant atomic memory ordering 
+### <span style="color: #00CEC9;">5. Quote GRPC Server</span>
+
+Takes the spread and provides the best ten deals and asks to a grpc client
 
 ## <span style="color: #FF7675;">Testing</span>
 
