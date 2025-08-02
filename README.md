@@ -1,12 +1,12 @@
-# Orderbook Quoter Server 
+# <span style="color: #FF6B6B;">Orderbook Quoter Server</span>
 
-# High level
+## <span style="color: #4ECDC4;">High Level</span>
 
 Builds a live orderbook from http snapshots from N configurable exchanges and then updates the orderbook 
 through soft real time websocket depth updates. After a update the best ten asks and bids aswell as well 
 as the spread are provided through a grpc server endpoint
 
-# Lower level
+## <span style="color: #45B7D1;">Lower Level</span>
 
 IO components: ExchangeStreams, and Quote GRPC Server are ran on seperate tokio runtimes in their own
 pinned threads.
@@ -16,12 +16,12 @@ pinned threads.
 
 Orderbook is ran with multiplie threads. One for writing to the book the others for reading it.
 
-## Orderbook structure
+### <span style="color: #96CEB4;">Orderbook Structure</span>
 
 // todo -- update my reasoning here ... on why i didn't just use a simple red black tree
     or the previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10)
 
-# Configuration
+## <span style="color: #FFEAA7;">Configuration</span>
 
 Exchange boots through a config by running `./orderbook-quoter-server --config=$(CONFIG_LOCATION)`. The 
 amount of exchanges in the exchange array must be equal to the orderbook's `exchange_count`. Every
@@ -30,7 +30,7 @@ expected trading range for the lifetime of this service.
 
 The larger expected volatility the higher the orderbook's depth needs to be.
 
-```       
+```yaml       
 exchanges:
   - client_name: "binance_usa_1"
     exchange_name: 0
@@ -65,7 +65,7 @@ grpc_server:
   host_uri: "127.0.0.1:5000"
 ```
 
-# Building
+## <span style="color: #74B9FF;">Building</span>
 
 Builds are done through the build script (build.rs). The script reads the config file and runs procedural macros on 
 the code base. The config file's "orderbook.exchange_count" and exchange's exchange array length must be equal or the
@@ -78,9 +78,9 @@ Files changed by the build script are:
 
 (1) orderbook/src/lib.rs
 
-## Components 
+## <span style="color: #A29BFE;">Components</span>
 
-### 1. ExchangeStream
+### <span style="color: #FD79A8;">1. ExchangeStream</span>
 
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
 but it currently is not implemented in the Orderbook/DepthDriver. 
@@ -88,22 +88,22 @@ but it currently is not implemented in the Orderbook/DepthDriver.
 Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
 sequencing of orderbook snapshots and depth updates through their timestamps
 
-### 2. Exchange
+### <span style="color: #FDCB6E;">2. Exchange</span>
 
 Wrapper around exchange stream to handle websocket sinks and other functionality
 
-### 3. DepthDriver
+### <span style="color: #6C5CE7;">3. DepthDriver</span>
 
 Provides a controlling interface to all exchange streams that push depths.
 
-#### Future work: 
+#### Future work:
 
 (1) Needs to handle orderbook reset and orderbook snapshot
 retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
 
 (2) Exchange Stream websocket failure states.
 
-### 4. Orderbook
+### <span style="color: #E17055;">4. Orderbook</span>
 
 Handles orderbook writing and reading.  
 
@@ -113,7 +113,7 @@ Has 2 states:
 
 (2) Updating the the orderbook with ws depths and then reading the orderbook for best deals
 
-### 5. Quote GRPC Server
+### <span style="color: #00CEC9;">5. Quote GRPC Server</span>
 
 Takes the spread and provides the best ten deals and asks to a grpc client
 
@@ -121,7 +121,7 @@ Takes the spread and provides the best ten deals and asks to a grpc client
 
 TBD
 
-#### Future work: 
+#### Future work:
 
 (1) A state when the orderbook is needs rebuilding if a ExchangeStream websocket connection fails. 
 
@@ -135,9 +135,9 @@ TBD
 
 (6) Possibly more performant atomic memory ordering 
 
-### Testing
+## <span style="color: #FF7675;">Testing</span>
 
-#### 1. Depth Generator
+### <span style="color: #55A3FF;">1. Depth Generator</span>
 
 Generates depths in many different sequences: upward, downward through
 hacking a brownian motion stochastic process.
@@ -146,12 +146,16 @@ hacking a brownian motion stochastic process.
 
 Oscillating Depths rather then just upward and downward trends
 
-#### 2. Exchange Stubs
+### <span style="color: #FD79A8;">2. Exchange Stubs</span>
 
 Provides both HTTP and websocket endpoints for depths. Leverages depth generator
 as a dependency.
 
-#### 3. Exchange Server
+### <span style="color: #FDCB6E;">3. Exchange Server</span>
 
 Dockerized exchange stub for full integration testing. Leverages exchange stub as a
 dependency.
+
+## <span style="color: #E84393;">Dependencies</span>
+
+Core dependencies for the orderbook quoter server.
