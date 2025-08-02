@@ -11,6 +11,9 @@ as the spread are provided through a grpc server endpoint
 IO components: ExchangeStreams, and Quote GRPC Server are ran on seperate tokio runtimes in their own
 pinned threads.
 
+// todo: reason about the cores here and seek alternative setup 
+   -- too much information is being exchanged between cores during real time processing
+
 Orderbook is ran with multiplie threads. One for writing to the book the others for reading it.
 
 ## Orderbook structure
