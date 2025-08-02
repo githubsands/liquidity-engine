@@ -2,9 +2,9 @@
 
 # High level
 
-Builds a live orderbook from http snapshots from N configurable exchanges and updates it through
-websocket depth updates. After a update the best ten asks and bids aswell as well as the spread 
-are provided through a grpc server endpoint
+Builds a live orderbook from http snapshots from N configurable exchanges and then updates the orderbook 
+through soft real time websocket depth updates. After a update the best ten asks and bids aswell as well 
+as the spread are provided through a grpc server endpoint
 
 # Lower level
 
@@ -13,18 +13,24 @@ pinned threads.
 
 Orderbook is ran with multiplie threads. One for writing to the book the others for reading it.
 
+## Orderbook structure
+
+// todo -- update my reasoning here ... on why i didn't just use a simple red black tree
+    or the previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10)
+
 # Configuration
 
 Exchange boots through a config by running `./orderbook-quoter-server --config=$(CONFIG_LOCATION)`. The 
 amount of exchanges in the exchange array must be equal to the orderbook's `exchange_count`. Every
 `depth` field must be equal in the exchanges and orderbook's depth field should cover the entire 
-expected trading range for the lifetime of this service. The larger expected volatility the higher the orderbook's
-depth needs to be.
+expected trading range for the lifetime of this service. 
+
+The larger expected volatility the higher the orderbook's depth needs to be.
 
 ```       
 exchanges:
   - client_name: "binance_usa_1"
-    exchange_name: 1
+    exchange_name: 0
     snapshot_enabled: true
     http_client: true
     snapshot_uri: "http://localhost:5000"
@@ -34,7 +40,7 @@ exchanges:
     depth: 5000
     buffer_size: 6000
 - client_name: "binance_usa_2"
-    exchange_name: 2
+    exchange_name: 1
     snapshot_enabled: true
     http_client: true
     snapshot_uri: "http://localhost:6000"
@@ -71,7 +77,7 @@ Files changed by the build script are:
 
 ## Components 
 
-### ExchangeStream
+### 1. ExchangeStream
 
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
 but it currently is not implemented in the Orderbook/DepthDriver. 
@@ -79,22 +85,22 @@ but it currently is not implemented in the Orderbook/DepthDriver.
 Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
 sequencing of orderbook snapshots and depth updates through their timestamps
 
-### Exchange
+### 2. Exchange
 
 Wrapper around exchange stream to handle websocket sinks and other functionality
 
-### DepthDriver
+### 3. DepthDriver
 
-Provides a controlling interface to all exchange streams. 
+Provides a controlling interface to all exchange streams that push depths.
 
-Future work: 
+#### Future work: 
 
 (1) Needs to handle orderbook reset and orderbook snapshot
 retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
 
 (2) Exchange Stream websocket failure states.
 
-### Orderbook
+### 4. Orderbook
 
 Handles orderbook writing and reading.  
 
@@ -104,7 +110,15 @@ Has 2 states:
 
 (2) Updating the the orderbook with ws depths and then reading the orderbook for best deals
 
-Future work: 
+### 5. Quote GRPC Server
+
+Takes the spread and provides the best ten deals and asks to a grpc client
+
+#### Future work:
+
+TBD
+
+#### Future work: 
 
 (1) A state when the orderbook is needs rebuilding if a ExchangeStream websocket connection fails. 
 
@@ -122,24 +136,19 @@ Future work:
 
 #### 1. Depth Generator
 
-Generates depths in many different sequences.
+Generates depths in many different sequences: upward, downward through
+hacking a brownian motion stochastic process.
 
-Future Work:
+##### Future Work:
 
 Oscillating Depths rather then just upward and downward trends
 
 #### 2. Exchange Stubs
 
-Provides both HTTP and websocket endpoints for depths. Leverages depth generator.
+Provides both HTTP and websocket endpoints for depths. Leverages depth generator
+as a dependency.
 
 #### 3. Exchange Server
 
-Dockerized exchange stub for full integration testing.
-
-### Quote GRPC Server
-
-Takes the spread and provides the best ten deals and asks to a grpc client
-
-Future work:
-
-TBD
+Dockerized exchange stub for full integration testing. Leverages exchange stub as a
+dependency.
