@@ -93,14 +93,17 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
     let (mut orderbook, depth_producer) =
         OrderBook::new(quotes_producer.clone(), &config.orderbook);
     orderbook.send_deals = true; // TODO: this will be removed in the future, a hack.
+    
+    // todo: update orderbook so bids is in its own thread and asks is in its own thread
+    //       exchange stream(s) should possibly just be in each ask and bid thread as well
     let orderbook = Box::new(orderbook);
 
     let orderbook_depth_processor_core = core_ids[0];
     let mut orderbook_clone = orderbook.clone();
     let t1 = thread::spawn(move || {
         info!("starting orderbook, depth processor, writer thread");
-        _ = orderbook_clone.process_all_depths(&process_depths_ctx);
-        let _ = core_affinity::set_for_current(orderbook_depth_processor_core);
+        orderbook_clone.process_all_depths(&process_depths_ctx);
+        core_affinity::set_for_current(orderbook_depth_processor_core);
     });
 
     let mut orderbook_clone = orderbook.clone();
@@ -132,7 +135,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .worker_threads(1)
             .build()
             .unwrap();
-        let _ = core_affinity::set_for_current(io_grpc_core);
+        core_affinity::set_for_current(io_grpc_core);
         let grpc_io_handler = async_grpc_io_rt.handle();
         let grpc_server = grpc_io_handler.spawn(async move {
             run_server(&config_clone, quotes_producer).await;
@@ -140,7 +143,6 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         });
         async_grpc_io_rt.block_on(grpc_server);
     });
-
     let io_ws_core = core_ids[2];
     let depth_producer = depth_producer.clone();
     let snapshot_depth_consumer = snapshot_depth_consumer.clone();
@@ -155,7 +157,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             .build()
             .unwrap();
         let local = LocalSet::new();
-        let _ = core_affinity::set_for_current(io_ws_core);
+        core_affinity::set_for_current(io_ws_core);
         local.spawn_local(async move {
             let mut depth_driver = DepthDriver::new(
                 &config_clone.exchanges,
@@ -170,9 +172,9 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
                     panic!("failed to stream exchanges: {:?}", stream_error);
                 }
             }
-            let _ = depth_driver.subscribe_depths().await;
-            let _ = depth_driver.build_orderbook().await;
-            let stream_result = depth_driver.run_streams(&mut async_ctx).await;
+            depth_driver.subscribe_depths().await;
+            depth_driver.build_orderbook().await;
+            if let match stream_result = depth_driver.run_streams(&mut async_ctx).await;
             match stream_result {
                 Ok(_) => depth_driver.close_exchanges().await,
                 Err(stream_error) => {
