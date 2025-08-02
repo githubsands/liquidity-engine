@@ -129,11 +129,9 @@ TBD
 
 (3) Seperate bid and ask depth updates into two buffers and write from two different threads rather then one.
 
-(4) Use a decimals or another solution over floats for quantities.
+(4) Use fixed library for floats https://docs.rs/fixed/latest/fixed/
 
-(5) Use a decimals or another solution over floats for price levels.
-
-(6) Possibly more performant atomic memory ordering 
+(5) Possibly more performant atomic memory ordering 
 
 ## <span style="color: #FF7675;">Testing</span>
 
