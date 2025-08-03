@@ -80,7 +80,13 @@ Files changed by the build script are:
 
 ## <span style="color: #A29BFE;">Components</span>
 
-### <span style="color: #FD79A8;">1. ExchangeStream</span>
+### <span style="color: #FDCB6E;">1. Exchange</span>
+
+#### Exchange
+
+Wrapper around exchange stream to handle websocket sinks and other functionality
+
+#### ExchangeStream
 
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
 but it currently is not implemented in the Orderbook/DepthDriver. 
@@ -88,11 +94,7 @@ but it currently is not implemented in the Orderbook/DepthDriver.
 Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
 sequencing of orderbook snapshots and depth updates through their timestamps
 
-### <span style="color: #FDCB6E;">2. Exchange</span>
-
-Wrapper around exchange stream to handle websocket sinks and other functionality
-
-### <span style="color: #6C5CE7;">3. DepthDriver</span>
+### <span style="color: #6C5CE7;">2. DepthDriver</span>
 
 Provides a controlling interface to all exchange streams that push depths.
 
@@ -103,7 +105,7 @@ retriggering with correct sequencing (https://github.com/binance/binance-spot-ap
 
 (2) Exchange Stream websocket failure states.
 
-### <span style="color: #E17055;">4. Orderbook</span>
+### <span style="color: #E17055;">3. Orderbook</span>
 
 Handles orderbook writing and reading.  
 
@@ -124,7 +126,7 @@ Has 2 states:
 
 (4) Use fixed library for floats https://docs.rs/fixed/latest/fixed/
 
-### <span style="color: #00CEC9;">5. Quote GRPC Server</span>
+### <span style="color: #00CEC9;">4. Quote GRPC Server</span>
 
 Takes the spread and provides the best ten deals and asks to a grpc client
 
