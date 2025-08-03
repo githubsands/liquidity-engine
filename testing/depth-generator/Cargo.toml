@@ -6,8 +6,34 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.8.5"
 rand_distr = "0.4.3"
-market-objects = { path = "../../market-objects"}
 itertools = "0.11.0"
+crossbeam-channel = "0.5.15"
 tracing = "0.1.37"
+rustc-hash = "1.1.0"
+async-trait = "0.1.68"
+futures = "0.3.28"
+ordered-float = "3.7.0"
+bounded-vec-deque = "0.1.1"
+thin-vec = "0.2.12"
+tokio = { version = "1.28.1", features = ["full"] }
+fixed-vec-deque = "0.1.11"
+test-log = "0.2.11"
+env_logger = "*"
+tracing-subscriber = "0.3.17"
+libmath = "0.2.1"
+static_assertions = "1.1.0"
+rand = "0.8.5"
+io-context = "0.2.0"
+envtime = "0.0.4"
+const_env = "0.1.2"
+lazy_static = "1.4.0"
+dhat = "0.3.2"
+tonic = "0.9.2"
+market-objects =  { path = "../../market-objects"}
+internal-objects =  { path = "../../internal-objects"}
+quoter-errors =  { path = "../../quoter-errors"}
+ring-buffer =  { path = "../../ring-buffer"}
+config =  { path = "../../config"}
+prost = "0.11.9"
+
