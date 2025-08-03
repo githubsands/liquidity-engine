@@ -13,8 +13,8 @@ tokio = { version = "1.28.1", features = ["full", "rt"]}
 tokio-tungstenite = "0.19.0"
 tracing = "0.1.37"
 tungstenite = "0.19.0"
-market-objects = { path = "../../market-objects"}
-depth-generator = { path = "../depth-generator" }
+market-objects.workspace = true
+depth-generator.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.96"
 log = "0.4.18"

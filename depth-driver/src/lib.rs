@@ -14,7 +14,7 @@ use futures::stream::FuturesOrdered;
 use futures::StreamExt;
 
 use config::ExchangeConfig;
-use exchange::Exchange;
+use exchange::exchange::Exchange;
 use market_objects::DepthUpdate;
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 

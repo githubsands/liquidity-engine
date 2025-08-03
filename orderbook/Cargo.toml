@@ -3,40 +3,37 @@ name = "orderbook"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-crossbeam-channel = "0.5.8"
-tracing = "0.1.37"
-rustc-hash = "1.1.0"
-async-trait = "0.1.68"
-futures = "0.3.28"
-ordered-float = "3.7.0"
-bounded-vec-deque = "0.1.1"
-thin-vec = "0.2.12"
-tokio = { version = "1.28.1", features = ["full"] }
-fixed-vec-deque = "0.1.11"
-test-log = "0.2.11"
-env_logger = "*"
-tracing-test = "0.2.4"
-tracing-subscriber = "0.3.17"
-libmath = "0.2.1"
-static_assertions = "1.1.0"
-itertools = "0.10.5"
-rand = "0.8.5"
-io-context = "0.2.0"
-envtime = "0.0.4"
-const_env = "0.1.2"
-lazy_static = "1.4.0"
-dhat = "0.3.2"
-tonic = "0.9.2"
-market-objects =  { path = "../market-objects"}
-internal-objects =  { path = "../internal-objects"}
-quoter-errors =  { path = "../quoter-errors"}
-ring-buffer =  { path = "../ring-buffer"}
-config =  { path = "../config"}
-testing-traits= { path = "../testing/testing-traits" }
-depth-generator = { path = "../testing/depth-generator"}
-quoter-grpc-server = { path = "../quoter-grpc-server" }
-prost = "0.11.9"
-
+crossbeam-channel.workspace = true
+tracing.workspace = true
+rustc-hash.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+ordered-float.workspace = true
+bounded-vec-deque.workspace = true
+thin-vec.workspace = true
+tokio.workspace = true
+fixed-vec-deque.workspace = true
+test-log.workspace = true
+env_logger.workspace = true
+tracing-test.workspace = true
+tracing-subscriber.workspace = true
+libmath.workspace = true
+static_assertions.workspace = true
+itertools.workspace = true
+rand.workspace = true
+io-context.workspace = true
+envtime.workspace = true
+const_env.workspace = true
+lazy_static.workspace = true
+dhat.workspace = true
+tonic.workspace = true
+market-objects.workspace = true
+internal-objects.workspace = true
+quoter-errors.workspace = true
+ring-buffer.workspace = true
+config.workspace = true
+testing-traits.workspace = true
+depth-generator.workspace = true
+quoter-grpc-server.workspace = true
+prost.workspace = true
