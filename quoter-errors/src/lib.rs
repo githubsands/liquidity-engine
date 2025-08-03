@@ -1,75 +1,61 @@
-use std::fmt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ErrorHotPath {
+    #[error("Exchange WS Error: {0}")]
     ExchangeWSError(String),
+    #[error("Exchange WS Reconnect Error: {0}")]
     ExchangeWSReconnectError(String),
+    #[error("Serialization error: {0}")]
     Serialization(String),
+    #[error("Quoter GRPC Error: {0}")]
     QuoterGRPCError(String),
+    #[error("Quote Server Sink Error: {0}")]
     QuoteServerSinkError(String),
+    #[error("HTTP Snapshot error: {0}")]
     ExchangeStreamSnapshot(String),
+    #[error("Received non-text message from exchange")]
     ReceivedNonTextMessageFromExchange,
+    #[error("OrderBook Error: {0}")]
     OrderBook(String),
+    #[error("Negative liquidity detected")]
     OrderBookNegativeLiquidity,
+    #[error("Maximum traversal limit reached")]
     OrderBookMaxTraversedReached,
+    #[error("Deal send failed")]
     OrderBookDealSendFail,
 }
 
-impl fmt::Display for ErrorHotPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorHotPath::ExchangeWSError(s) => write!(f, "Exchange WS Error: {}", s),
-            ErrorHotPath::ExchangeWSReconnectError(s) => {
-                write!(f, "Exchange WS Reconnect Error: {}", s)
-            }
-            ErrorHotPath::QuoterGRPCError(s) => write!(f, "Quoter GRPC Error: {}", s),
-            ErrorHotPath::QuoteServerSinkError(s) => write!(f, "Quote Server Sink Error: {}", s),
-            ErrorHotPath::Serialization(s) => write!(f, "Serialization error: {}", s),
-            ErrorHotPath::ReceivedNonTextMessageFromExchange => {
-                write!(f, "ReceivedNonTextMessage")
-            }
-            ErrorHotPath::OrderBook(s) => {
-                write!(f, "OrderBookError: {}", s)
-            }
-            ErrorHotPath::ExchangeStreamSnapshot(s) => {
-                write!(f, "HTTPSnapshot error: {}", s)
-            }
-            ErrorHotPath::OrderBookNegativeLiquidity => {
-                write!(f, "NegativeQuantity")
-            }
-            ErrorHotPath::OrderBookMaxTraversedReached => {
-                write!(f, "MaxTraversedReached")
-            }
-            ErrorHotPath::OrderBookDealSendFail => {
-                write!(f, "DealSendFail")
-            }
-        }
-    }
-}
-
-// TODO: Update these errors to take in the upstream error
 #[derive(Error, Debug)]
 pub enum ErrorInitialState {
-    ExchangeWSError(tokio_tungstenite::tungstenite::Error),
+    #[error("Exchange WS Error: {0}")]
+    ExchangeWSError(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("Message Serialization Error: {0}")]
     MessageSerialization(String),
+    #[error("WS Connection Error: {0}")]
     WSConnection(String),
+    #[error("Exchange Snapshot error: {0}")]
     Snapshot(String),
+    #[error("Exchange Controller Error")]
     ExchangeController,
 }
 
-impl fmt::Display for ErrorInitialState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorInitialState::ExchangeWSError(e) => {
-                write!(f, "Exchange WS Error: {}", e)
-            }
-            ErrorInitialState::MessageSerialization(s) => {
-                write!(f, "Message Serialization Error: {}", s)
-            }
-            ErrorInitialState::WSConnection(s) => write!(f, "WS Connection Error: {}", s),
-            ErrorInitialState::ExchangeController => write!(f, "Exchange Controller Error"),
-            ErrorInitialState::Snapshot(s) => write!(f, "Exchange Snapshot error: {}", s),
-        }
-    }
+#[derive(Error, Debug)]
+pub enum ErrorWithSource {
+    #[error("Network error")]
+    Network(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("Serialization failed")]
+    Serialization(#[from] serde_json::Error),
+    #[error("IO error: {message}")]
+    Io {
+        #[source]
+        source: std::io::Error,
+        message: String,
+    },
+    #[error("Custom error with context: {context}")]
+    Custom {
+        context: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
