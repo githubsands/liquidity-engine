@@ -6,9 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-exchange-stream = { path = "../exchange-stream"}
+exchange-stubs = { path = "../testing/exchange-stubs/"}
+testing-traits = { path = "../testing/testing-traits/"}
+
 market-objects = { path = "../market-objects"}
 quoter-errors = { path = "../quoter-errors"}
+
+reqwest = { version = "*", features = ["json"]}
 config = { path = "../config"}
 tokio = "1.29.1"
 crossbeam-channel = "0.5.8"
@@ -17,3 +21,5 @@ futures = "0.3.28"
 serde_json = "1.0.102"
 futures-util = "0.3.28"
 tracing = "0.1.37"
+pin-project-lite = "0.2.16"
+itertools = "0.14.0"

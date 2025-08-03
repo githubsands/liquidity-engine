@@ -1,4 +1,4 @@
-use depth_generator::DepthMessageGenerator;
+use depth_generator::generator::DepthMessageGenerator;
 use futures::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use market_objects::{

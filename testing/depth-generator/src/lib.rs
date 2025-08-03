@@ -1,2 +1,2 @@
-mod generator;
-mod machine;
+pub mod generator;
+pub mod machine;

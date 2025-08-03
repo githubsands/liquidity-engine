@@ -12,7 +12,6 @@ debug = true
 [workspace]
 members = [
     "quoter-grpc-server",
-    "exchange-stream",
     "exchange",
     "depth-driver",
     "testing/depth-generator",
@@ -20,7 +19,7 @@ members = [
     "internal-objects",
     "market-objects",
     "orderbook",
-    "config",
+    "config", "multi-core-book-feed",
 ]
 exclude = [
     "market-maker",
@@ -30,6 +29,8 @@ exclude = [
 [dependencies]
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 prost = "0.11"
+fixed = "1.29.0"
+bitflags = "2.9.1"
 
 [build-dependencies]
 prost = "0.11"

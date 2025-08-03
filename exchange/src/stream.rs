@@ -20,14 +20,14 @@ use tokio::time::{sleep, Duration};
 use crossbeam_channel::{Sender, TrySendError};
 use futures::stream::iter;
 use reqwest::Client;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use config::ExchangeConfig;
 use market_objects::{
     DepthUpdate, HTTPSnapShotDepthResponseBinance, HTTPSnapShotDepthResponseByBit,
     WSDepthUpdateBinance, WSDepthUpdateByBit, WSOrderBookUpdatesBinance,
 };
-use quoter_errors::{ErrorHotPath, ErrorInitialState};
+use quoter_errors::*;
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
@@ -407,7 +407,7 @@ impl Stream for ExchangeStream {
         }
         let Some(mut orderbooks) = this.ws_connection_orderbook_reader.as_mut().as_pin_mut() else {
             error!("failed to copy the orderbooks stream");
-            return Poll::Ready(Some(WSStreamState::FailedStream))
+            return Poll::Ready(Some(WSStreamState::FailedStream));
         };
         info!("streaming -- here 2");
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
@@ -526,6 +526,7 @@ mod tests {
         fn producer_default() -> (Box<Self>, Receiver<DepthUpdate>) {
             let (depths_producer, depths_consumer) = bounded::<DepthUpdate>(100);
             let exchange_stream = Self {
+                stream_count: 0,
                 depths_producer: depths_producer,
                 client_name: String::from(""),
                 exchange_name: 1,
@@ -752,7 +753,3 @@ mod tests {
         assert!(*count >= desired_depths)
     }
 }
-
-// test stream with trigger select
-// test stream triggered snapsho
-// test stream sequenced depths
