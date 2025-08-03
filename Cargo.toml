@@ -15,6 +15,7 @@ members = [
     "exchange",
     "depth-driver",
     "orderbook",
+    "orderbook-slabs",
     "ring-buffer",
     "testing/depth-generator",
     "testing/exchange-stubs",

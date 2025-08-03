@@ -1436,6 +1436,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orderbook-slabs"
+version = "0.1.0"
+dependencies = [
+ "fixed",
+ "rustc-hash",
+]
+
+[[package]]
 name = "ordered-float"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
