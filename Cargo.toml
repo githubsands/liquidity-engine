@@ -22,7 +22,7 @@ members = [
     "objs/internal-objects",
     "objs/market-objects",
     "objs/errors",
-    "objs/config",
+    "objs/config", "orderbook-sync",
 ]
 exclude = [
     "market-maker",

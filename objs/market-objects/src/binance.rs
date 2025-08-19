@@ -89,3 +89,10 @@ pub struct BinanceDepthUpdate {
     #[serde(deserialize_with = "as_f64")]
     pub quantity: f64,
 }
+
+#[feature(zero_copy)] 
+{
+    struct DepthUpdate{
+        inut: u8,
+    }
+}

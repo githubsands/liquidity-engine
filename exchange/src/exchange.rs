@@ -1,23 +1,20 @@
-use std::pin::Pin;
-use std::time::Duration;
-
 use futures::stream::SplitSink;
-use futures_util::{try_join, SinkExt};
+use futures_util::SinkExt;
 
-use futures::future::join_all;
 use tokio::net::TcpStream;
-use tokio::sync::watch::{
-    channel as watchChannel, Receiver as watchReceiver, Sender as watchSender,
-};
+use tokio::sync::watch::Receiver as watchReceiver;
 use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
-use tracing::info;
 
 use crossbeam_channel::Sender;
+
+use tracing::{error, info};
 
 use crate::stream::ExchangeStream;
 use config::ExchangeConfig;
 use market_objects::DepthUpdate;
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
+
+const SUBSCRIBE: &'static str = "SUBSCRIBE";
 
 pub struct Exchange {
     pub inner: ExchangeStream,
@@ -31,20 +28,19 @@ impl Exchange {
         exchange_config: &ExchangeConfig,
         depth_producer: Sender<DepthUpdate>,
         watch_trigger: watchReceiver<()>,
-    ) -> Self {
+    ) -> Result<Exchange, ErrorInitialState> {
         let inner = ExchangeStream::new(
             exchange_config,
             depth_producer.clone(),
             watch_trigger,
             exchange_config.http_client,
-        )
-        .unwrap();
-        Exchange {
-            inner: inner,
+        )?;
+        Ok(Exchange {
+            inner,
             ws_sink: None,
             websocket_uri: exchange_config.ws_uri.clone(),
             watched_pair: exchange_config.watched_pair.clone(),
-        }
+        })
     }
     pub async fn start(&mut self) -> Result<(), ErrorInitialState> {
         let ws_sink = self.inner.start().await?;
@@ -58,7 +54,7 @@ impl Exchange {
             self.websocket_uri
         );
         let json_obj_binance = serde_json::json!({
-            "method": "SUBSCRIBE",
+            "method": SUBSCRIBE,
             "params": [
                 "btcusdt@depth5",
             ],
@@ -67,16 +63,16 @@ impl Exchange {
         let exchange_response = self
             .ws_sink
             .as_mut()
-            .unwrap()
+            .ok_or(ErrorInitialState::ExchangeController)?
             .send(Message::Text(json_obj_binance.to_string()))
             .await;
         // TODO: handle this differently;
         match exchange_response {
             Ok(response) => {
-                print!("subscription success: {:?}", response);
+                info!("subscription success: {:?}", response);
             }
             Err(error) => {
-                print!("error {}", error)
+                error!("error {}", error)
             }
         }
         Ok(())
@@ -103,7 +99,11 @@ impl Exchange {
         Ok(())
     }
 
-    pub async fn close(&mut self) {
-        let _ = self.ws_sink.as_mut().unwrap().send(Message::Close(None));
+    pub async fn close(&mut self) -> Result<(), ErrorInitialState> {
+        self.ws_sink
+            .as_mut()
+            .ok_or(ErrorInitialState::ExchangeController)?
+            .send(Message::Close(None));
+        Ok(())
     }
 }

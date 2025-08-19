@@ -6,28 +6,28 @@ use serde_json::from_str;
 
 use pin_project_lite::pin_project;
 
+use futures::stream::iter;
 use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
 use itertools::interleave;
 use tokio::net::TcpStream;
+use tokio::sync::watch::Receiver as stateSync;
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{
     connect_async_with_config, tungstenite::protocol::Message,
     tungstenite::protocol::WebSocketConfig, MaybeTlsStream, WebSocketStream,
 };
 
-use tokio::sync::watch::Receiver as watchReceiver;
-use tokio::time::{sleep, Duration};
-
 use crossbeam_channel::{Sender, TrySendError};
-use futures::stream::iter;
 use reqwest::Client;
 use tracing::{error, info, warn};
 
 use config::ExchangeConfig;
 use market_objects::{
-    DepthUpdate, HTTPSnapShotDepthResponseBinance, HTTPSnapShotDepthResponseByBit,
-    WSDepthUpdateBinance, WSDepthUpdateByBit, WSOrderBookUpdatesBinance,
+    DepthUpdate, HTTPSnapShotDepthResponseBinance, WSDepthUpdateByBit, WSOrderBookUpdatesBinance,
 };
 use quoter_errors::*;
+
+type orderbook_snapshot_error = Box<dyn Error + Sync + Send + 'static>;
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
@@ -45,7 +45,7 @@ pin_project! {
         pub websocket_uri: String,
         pub watched_pair: String,
 
-        pub snapshot_trigger: Option<watchReceiver<()>>,
+        pub snapshot_sync: Option<stateSync<()>>,
 
         #[pin]
         buffer: Vec<DepthUpdate>,
@@ -64,7 +64,7 @@ impl ExchangeStream {
     pub fn new(
         exchange_config: &ExchangeConfig,
         orders_producer: Sender<DepthUpdate>,
-        snapshot_trigger: watchReceiver<()>,
+        snapshot_sync: stateSync<()>,
         _http_client_option: bool,
     ) -> Result<Self, ErrorInitialState> {
         let mut http_client: Option<Client> = None;
@@ -75,7 +75,7 @@ impl ExchangeStream {
         let exchange = ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
-            snapshot_trigger: Some(snapshot_trigger),
+            snapshot_sync: Some(snapshot_sync),
             websocket_depth_buffer: Vec::with_capacity(
                 exchange_config.ws_presequenced_depth_buffer,
             ),
@@ -135,9 +135,10 @@ impl ExchangeStream {
                 Ok(mut depths) => {
                     while let Some(depth) = depths.next() {
                         self.buffer.push(depth);
-                        self.next().await; // we must keep processing  snapshot depths and depths from the websocket
-                                           // but this time the websocket depths are stored in their own buffer
-                                           // to be sequenced
+                        // we must keep processing  snapshot depths and depths from the websocket
+                        // but this time the websocket depths are stored in their own buffer
+                        // to be sequenced
+                        self.next().await;
                     }
                     success = true;
                 }
@@ -160,101 +161,77 @@ impl ExchangeStream {
         self.buffer_websocket_depths = false;
     }
 
-    pub async fn run(&mut self) -> Result<(), ErrorHotPath> {
-        if let Some(trigger) = &mut self.snapshot_trigger {
-            tokio::select! {
-                    _ = trigger.changed()=> {
-                        info!("pulling websocket");
-                        self.buffer_websocket_depths = true;
-                        let mut pull_retry_count = 0;
-                        while pull_retry_count < self.pull_retry_count {
-                            let pull_result = self.pull_depths().await;
-                            match pull_result {
-                                Ok(mut depths) => {
-                                while let Some(depth) = depths.next() {
-                                    self.buffer.push(depth);
-                                    self.next().await; // we must keep processing snapshot depths and depths from the websocket
-                                                       // but this time the websocket depths are stored in their own buffer
-                                                       // to be sequenced
+    pub async fn run_with_snapshot(&mut self) -> Result<(), ErrorHotPath> {
+        let snapshot_sync = &mut self.snapshot_sync.as_mut().unwrap();
+        tokio::select! {
+                _ = snapshot_sync.changed()=> {
+                    info!("pulling websocket");
+                    self.buffer_websocket_depths = true;
+                    let mut pull_retry_count = 0;
+                    while pull_retry_count < self.pull_retry_count {
+                        let pull_result = self.pull_depths().await;
+                        match pull_result {
+                            Ok(mut depths) => {
+                            while let Some(depth) = depths.next() {
+                                self.buffer.push(depth);
+                                // we must keep processing snapshot depths and depths from the websocket
+                                // but this time the websocket depths are stored in their own buffer
+                                // to be sequenced
+                                self.next().await;
+                            }
+                                break
+                            }
+                            Err(pull_error) => {
+                                if pull_retry_count > self.pull_retry_count {
+                                    error!("reached maxed snapshot pull count retry for exchange {} received error: {}", self.exchange_name, pull_error);
+                                    return Err(ErrorHotPath::ExchangeStreamSnapshot(pull_error.to_string()))
                                 }
-                                    break
-                                }
-                                Err(pull_error) => {
-                                    if pull_retry_count == self.pull_retry_count {
-                                        error!("reached maxed snapshot pull count retry for exchange {} received error: {}", self.exchange_name, pull_error);
-                                        return Err(ErrorHotPath::ExchangeStreamSnapshot(pull_error.to_string()))
-                                    }
-                                    pull_retry_count = pull_retry_count + 1;
+                                    pull_retry_count += 1;
                                     warn!("failed to get websocket depths from exchange {}", pull_error);
                                     continue
-                                    }
                                 }
                             }
-                        // we are done. push snapshot depths to the orderbook - turn this buffer off
-                        // and push the buffer websocket depths to the orderbook
-                        self.buffer_websocket_depths = false;
-
-                        while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
-                            self.buffer.push(websocket_depth);
-                            self.next().await;
                         }
-                        Ok(())
+                    // we are done. push snapshot depths to the orderbook - turn this buffer off
+                    // and push the buffer websocket depths to the orderbook
+                    self.buffer_websocket_depths = false;
+                    while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
+                        self.buffer.push(websocket_depth);
+                        self.next().await;
                     }
-                // Most exchanges ws updates every 100 milliseconds so there is no need to poll more then
-                //
-                // TODO: Define these errors explicitly - they are not all ExchangeWSErrors
-                _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
-                    info!("streaming depths after timer");
-                    if let Some(stream_poll_state) = self.next().await {
-                match stream_poll_state {
-                    WSStreamState::Success => return Ok(()),
-                    WSStreamState::WaitingForDepth => return Ok(()),
-                    WSStreamState::FailedStream => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
-                    }
-                    WSStreamState::SenderError => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
-                    }
-                    WSStreamState::WSError(ws_error) => {
-                        return Err(ErrorHotPath::ExchangeWSError(ws_error.to_string()))
-                    }
-                    WSStreamState::FailedDeserialize => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
-                    }
+                    Ok(())
                 }
-            } else {
-                return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
-            }
-            }
-            }
-        } else {
-            tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)).await;
-            if let Some(stream_poll_state) = self.next().await {
-                match stream_poll_state {
-                    WSStreamState::Success => return Ok(()),
-                    WSStreamState::WaitingForDepth => return Ok(()),
-                    WSStreamState::FailedStream => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+            _ = tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)) => {
+                if let Some(stream_poll_state) = self.next().await {
+                    match stream_poll_state {
+                        WSStreamState::Success | WSStreamState::WaitingForDepth => return Ok(()),
+                        _ => {
+                            return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                        }
                     }
-                    WSStreamState::SenderError => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
-                    }
-                    WSStreamState::WSError(ws_error) => {
-                        return Err(ErrorHotPath::ExchangeWSError(ws_error.to_string()))
-                    }
-                    WSStreamState::FailedDeserialize => {
-                        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
-                    }
+                } else {
+                    return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
                 }
-            } else {
-                return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
             }
         }
     }
-    // TODO: Do not dynamically allocate errors in pull_depth
+
+    pub async fn run(&mut self) -> Result<(), ErrorHotPath> {
+        tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)).await;
+        if let Some(stream_poll_state) = self.next().await {
+            match stream_poll_state {
+                WSStreamState::Success | WSStreamState::WaitingForDepth => return Ok(()),
+                _ => 'error: {
+                    break 'error;
+                }
+            }
+        }
+        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
+    }
+
     async fn pull_depths(
         &mut self,
-    ) -> Result<impl Iterator<Item = DepthUpdate>, Box<dyn Error + Sync + Send + 'static>> {
+    ) -> Result<impl Iterator<Item = DepthUpdate>, orderbook_snapshot_error> {
         let snapshot_depths = self.orderbook_snapshot().await?;
         let interleaved_depths = interleave(snapshot_depths.0, snapshot_depths.1);
         Ok(interleaved_depths)
@@ -297,19 +274,13 @@ impl ExchangeStream {
                     Ok(snapshot_depths)
                 }
                 (snapshot_response, 2) => {
+                    // todo: snapshot a a different exchange
                     let snapshot: HTTPSnapShotDepthResponseBinance =
                         snapshot_response.json().await?;
                     info!("finished receiving snaps for {}", self.exchange_name);
                     let snapshot_depths = snapshot.depths(2);
                     Ok(snapshot_depths)
-                } /*
-                (snapshot_response, 3) => {
-                let snapshot: HTTPSnapShotDepthResponseByBit = snapshot_response.json().await?;
-                info!("finished receiving snaps for {}", self.exchange_name);
-                let snapshot_depths = snapshot.depths(3);
-                Ok(snapshot_depths)
                 }
-                 */
                 _ => {
                     error!(
                         "failed to create snapshot due to exchange_name {}",
@@ -355,6 +326,7 @@ impl ExchangeStream {
     }
 }
 
+#[derive(Debug)]
 pub enum WSStreamState {
     WSError(tokio_tungstenite::tungstenite::Error),
     SenderError,
@@ -364,19 +336,6 @@ pub enum WSStreamState {
     WaitingForDepth,
 }
 
-impl fmt::Debug for WSStreamState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WSStreamState::WSError(err) => write!(f, "WebSocket Error: {:?}", err),
-            WSStreamState::SenderError => write!(f, "Sender Error"),
-            WSStreamState::FailedStream => write!(f, "Failed Stream"),
-            WSStreamState::FailedDeserialize => write!(f, "Failed Deserialize"),
-            WSStreamState::Success => write!(f, "Success"),
-            WSStreamState::WaitingForDepth => write!(f, "Waiting for Depth"),
-        }
-    }
-}
-
 impl Stream for ExchangeStream {
     type Item = WSStreamState;
 
@@ -384,7 +343,6 @@ impl Stream for ExchangeStream {
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        info!("streaming -- here");
         let mut this = self.project();
         if let Some(depth) = this.buffer.pop() {
             if let Err(channel_error) = this.depths_producer.try_send(depth) {
@@ -409,39 +367,38 @@ impl Stream for ExchangeStream {
             error!("failed to copy the orderbooks stream");
             return Poll::Ready(Some(WSStreamState::FailedStream));
         };
-        info!("streaming -- here 2");
         while let Poll::Ready(stream_option) = orderbooks.poll_next_unpin(cx) {
             match stream_option {
                 Some(Ok(ws_message)) => match (&*this.exchange_name, ws_message) {
                     (1, ws_message) => {
+                        // ignore the NULL message from binance
                         if *this.stream_count != 1 {
-                            // ignore the NULL message from binance
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
                         }
-                        // TODO: ping/pong back
                         if ws_message.is_pong() || ws_message.is_ping() {
                             continue;
                         }
-
-                        info!("DEBUG: {:?}", ws_message);
-                        if let Ok(orderbook_update) =
-                            WSOrderBookUpdatesBinance::try_from(ws_message)
-                        {
-                            let depths = orderbook_update.depths(1);
-                            let woven_depths = interleave(depths.0, depths.1);
-                            if *this.buffer_websocket_depths {
-                                for depth in woven_depths {
-                                    this.buffer.push(depth);
-                                }
-                                continue;
-                            } else {
-                                for depth in woven_depths {
-                                    this.buffer.push(depth);
+                        let orderbook_update = {
+                            match WSOrderBookUpdatesBinance::try_from(ws_message) {
+                                Ok(orderbook_update) => orderbook_update,
+                                Err(e) => {
+                                    warn!("failed to deserialize the web socket messsage: {}", e);
+                                    continue;
                                 }
                             }
+                        };
+                        let depths = orderbook_update.depths(1);
+                        let woven_depths = interleave(depths.0, depths.1);
+                        if *this.buffer_websocket_depths {
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
+                            continue;
                         } else {
-                            warn!("failed to deserialize the object.");
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
                         }
                     }
                     (2, ws_message) => {
@@ -450,28 +407,29 @@ impl Stream for ExchangeStream {
                             *this.stream_count = 1;
                             return Poll::Ready(Some(WSStreamState::Success));
                         }
-                        // TODO: ping/pong back
                         if ws_message.is_pong() || ws_message.is_ping() {
                             continue;
                         }
-                        info!("DEBUG: {:?}", ws_message);
-                        if let Ok(orderbook_update) =
-                            WSOrderBookUpdatesBinance::try_from(ws_message)
-                        {
-                            let depths = orderbook_update.depths(1);
-                            let woven_depths = interleave(depths.0, depths.1);
-                            if *this.buffer_websocket_depths {
-                                for depth in woven_depths {
-                                    this.buffer.push(depth);
-                                }
-                                continue;
-                            } else {
-                                for depth in woven_depths {
-                                    this.buffer.push(depth);
+                        let orderbook_update = {
+                            match WSOrderBookUpdatesBinance::try_from(ws_message) {
+                                Ok(orderbook_update) => orderbook_update,
+                                Err(e) => {
+                                    warn!("failed to deserialize the web socket messsage: {}", e);
+                                    continue;
                                 }
                             }
+                        };
+                        let depths = orderbook_update.depths(1);
+                        let woven_depths = interleave(depths.0, depths.1);
+                        if *this.buffer_websocket_depths {
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
+                            continue;
                         } else {
-                            warn!("failed to deserialize the object.");
+                            for depth in woven_depths {
+                                this.buffer.push(depth);
+                            }
                         }
                     }
                     (3, ws_message) => {
@@ -494,7 +452,6 @@ impl Stream for ExchangeStream {
                     _ => break,
                 },
                 Some(Err(ws_error)) => {
-                    warn!("poor depth received: {}", ws_error);
                     return Poll::Ready(Some(WSStreamState::WSError(ws_error)));
                 }
                 _ => {
@@ -527,7 +484,7 @@ mod tests {
             let (depths_producer, depths_consumer) = bounded::<DepthUpdate>(100);
             let exchange_stream = Self {
                 stream_count: 0,
-                depths_producer: depths_producer,
+                depths_producer,
                 client_name: String::from(""),
                 exchange_name: 1,
                 snapshot_enabled: false,
@@ -539,7 +496,7 @@ mod tests {
                 websocket_uri: String::from(""),
                 watched_pair: String::from(""),
                 buffer_websocket_depths: true,
-                snapshot_trigger: None,
+                snapshot_sync: None,
                 buffer: Vec::new(),
                 ws_connection_orderbook: None,
                 ws_connection_orderbook_reader: None,

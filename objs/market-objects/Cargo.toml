@@ -12,3 +12,4 @@ serde_json = "1.0.96"
 smallvec = "1.10.0"
 tungstenite = "0.19.0"
 tokio-tungstenite = { version = "*", features = ["native-tls"] }
+rkyv = "0.8.11"

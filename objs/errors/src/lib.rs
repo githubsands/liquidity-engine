@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ErrorHotPath {
+    #[error("Exchange No Snapshot: {0}")]
+    ExchangeNoSnapshot(String),
     #[error("Exchange WS Error: {0}")]
     ExchangeWSError(String),
     #[error("Exchange WS Reconnect Error: {0}")]
