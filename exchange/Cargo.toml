@@ -20,3 +20,5 @@ tracing.workspace = true
 itertools.workspace = true
 tokio-tungstenite.workspace = true
 pin-project-lite.workspace = true
+arrayvec = { git = "https://github.com/bluss/arrayvec" }
+

@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use std::error::Error;
 use std::{pin::Pin, task::Poll};
 
@@ -34,7 +35,8 @@ pin_project! {
         pub client_name: String,
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
-        pub websocket_depth_buffer: Vec<DepthUpdate>,
+        // todo: update webssocket_depth_buffer take the array vecs size by pragma or something similar -- it should be configurable
+        pub websocket_depth_buffer: ArrayVec<DepthUpdate, 1000>,
         pub pull_retry_count: u8,
         pub http_snapshot_uri: String,
         pub buffer_websocket_depths: bool,
@@ -46,8 +48,9 @@ pin_project! {
 
         pub snapshot_sync: Option<stateSync<()>>,
 
+        // todo: update webssocket_depth_buffer take the array vecs size by pragma or something similar -- it should be configurable
         #[pin]
-        buffer: Vec<DepthUpdate>,
+        depth_update_buffer: ArrayVec<DepthUpdate, 1000>,
         #[pin]
         ws_connection_orderbook: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
         #[pin]
@@ -75,9 +78,7 @@ impl ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
             snapshot_sync: Some(snapshot_sync),
-            websocket_depth_buffer: Vec::with_capacity(
-                exchange_config.ws_presequenced_depth_buffer,
-            ),
+            websocket_depth_buffer: ArrayVec::new(),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
             pull_retry_count: 5,
@@ -88,7 +89,7 @@ impl ExchangeStream {
             watched_pair: exchange_config.watched_pair.clone(),
             stream_count: 0,
             ws_connection_orderbook: None::<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-            buffer: Vec::with_capacity(exchange_config.buffer_size),
+            depth_update_buffer: ArrayVec::new(),
             ws_connection_orderbook_reader: None,
             depths_producer: orders_producer,
             http_client,
@@ -133,7 +134,7 @@ impl ExchangeStream {
             match pull_result {
                 Ok(mut depths) => {
                     while let Some(depth) = depths.next() {
-                        self.buffer.push(depth);
+                        self.depth_update_buffer.push(depth);
                         // we must keep processing snapshot depths and depths from the websocket
                         // but this time the websocket depths are stored in their own buffer
                         // to be sequenced aftr snapshot depths are processed
@@ -155,7 +156,7 @@ impl ExchangeStream {
 
     pub async fn push_buffered_ws_depths(&mut self) {
         while let Some(websocket_depth) = self.websocket_depth_buffer.pop() {
-            self.buffer.push(websocket_depth);
+            self.depth_update_buffer.push(websocket_depth);
         }
         self.buffer_websocket_depths = false;
     }
@@ -421,12 +422,12 @@ impl Stream for ExchangeStream {
                         let woven_depths = interleave(depths.0, depths.1);
                         if *this.buffer_websocket_depths {
                             for depth in woven_depths {
-                                this.buffer.push(depth);
+                                this.depth_update_buffer.push(depth);
                             }
                             continue;
                         } else {
                             for depth in woven_depths {
-                                this.buffer.push(depth);
+                                this.depth_update_buffer.push(depth);
                             }
                         }
                     }
@@ -436,12 +437,12 @@ impl Stream for ExchangeStream {
                             let woven_depths = interleave(depths.0, depths.1);
                             if *this.buffer_websocket_depths {
                                 for depth in woven_depths {
-                                    this.buffer.push(depth);
+                                    this.depth_update_buffer.push(depth);
                                 }
                                 continue;
                             }
                             for depth in woven_depths {
-                                this.buffer.push(depth);
+                                this.depth_update_buffer.push(depth);
                             }
                         } else {
                             warn!("failed to deserialize the object.");
