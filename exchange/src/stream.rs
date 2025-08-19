@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::fmt;
 use std::{pin::Pin, task::Poll};
 
 use serde_json::from_str;
@@ -135,9 +134,9 @@ impl ExchangeStream {
                 Ok(mut depths) => {
                     while let Some(depth) = depths.next() {
                         self.buffer.push(depth);
-                        // we must keep processing  snapshot depths and depths from the websocket
+                        // we must keep processing snapshot depths and depths from the websocket
                         // but this time the websocket depths are stored in their own buffer
-                        // to be sequenced
+                        // to be sequenced aftr snapshot depths are processed
                         self.next().await;
                     }
                     success = true;
@@ -174,9 +173,6 @@ impl ExchangeStream {
                             Ok(mut depths) => {
                             while let Some(depth) = depths.next() {
                                 self.buffer.push(depth);
-                                // we must keep processing snapshot depths and depths from the websocket
-                                // but this time the websocket depths are stored in their own buffer
-                                // to be sequenced
                                 self.next().await;
                             }
                                 break
@@ -249,7 +245,7 @@ impl ExchangeStream {
             impl Iterator<Item = DepthUpdate>,
             impl Iterator<Item = DepthUpdate>,
         ),
-        Box<dyn Error + Sync + Send + 'static>,
+        orderbook_snapshot_error,
     > {
         let req_builder = self
             .http_client
@@ -328,6 +324,8 @@ impl ExchangeStream {
 
 #[derive(Debug)]
 pub enum WSStreamState {
+    // todo: collapse these errors into 1 Faulty state or do something differently
+    // -- this is our async state not a error
     WSError(tokio_tungstenite::tungstenite::Error),
     SenderError,
     FailedStream,
@@ -459,7 +457,6 @@ impl Stream for ExchangeStream {
                 }
             }
         }
-        info!("streaming -- here 1");
         return Poll::Ready(Some(WSStreamState::WaitingForDepth));
     }
 }

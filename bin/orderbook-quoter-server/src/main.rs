@@ -60,7 +60,6 @@ fn main() {
                 .takes_value(true),
         )
         .get_matches();
-
     let config_path = PathBuf::from(matches.value_of("config").unwrap_or("/etc/config.yaml"));
     info!("config path given: {:?}", config_path);
     let file = PathBuf::from(config_path);

@@ -16,3 +16,4 @@ config.workspace = true
 exchange.workspace = true
 market-objects.workspace = true
 quoter-errors.workspace = true
+anyhow = "1.0.99"
