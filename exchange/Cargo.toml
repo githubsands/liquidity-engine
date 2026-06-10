@@ -21,4 +21,5 @@ itertools.workspace = true
 tokio-tungstenite.workspace = true
 pin-project-lite.workspace = true
 arrayvec = { git = "https://github.com/bluss/arrayvec" }
+compio = "0.19.0"
 

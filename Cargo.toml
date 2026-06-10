@@ -16,13 +16,14 @@ members = [
     "depth-driver",
     "orderbook",
     "orderbook-slabs",
-    "ring-buffer",
     "testing/depth-generator",
     "testing/exchange-stubs",
     "objs/internal-objects",
     "objs/market-objects",
     "objs/errors",
-    "objs/config", "replicate", "sm",
+    "objs/config",
+    "replicate",
+    "sm",
 ]
 exclude = ["market-maker", "exchange-server"]
 
@@ -67,7 +68,6 @@ internal-objects = { path = "objs/internal-objects" }
 quoter-errors = { path = "objs/errors" }
 config = { path = "objs/config" }
 
-ring-buffer = { path = "ring-buffer" }
 testing-traits = { path = "testing/testing-traits" }
 depth-generator = { path = "testing/depth-generator" }
 exchange-stubs = { path = "testing/exchange-stubs" }

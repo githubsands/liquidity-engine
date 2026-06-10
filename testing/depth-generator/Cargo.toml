@@ -33,7 +33,6 @@ tonic = "0.9.2"
 market-objects.workspace = true
 internal-objects.workspace = true
 quoter-errors.workspace = true
-ring-buffer.workspace = true
 config.workspace = true
 prost = "0.11.9"
 

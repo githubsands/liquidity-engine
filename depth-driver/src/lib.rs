@@ -4,6 +4,8 @@ use std::rc::Rc;
 use crossbeam_channel::Sender;
 use tracing::warn;
 
+use compio::runtime::{self, Runtime};
+
 use tokio::sync::watch::{channel as watchChannel, Receiver as watchReceiver};
 use tokio::task;
 use tokio_context::context::Context;
@@ -14,10 +16,8 @@ use market_objects::DepthUpdate;
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 pub struct DepthDriver {
+    rt: Runtime,
     exchanges: Vec<Rc<RefCell<Exchange>>>,
-    // todo: implement syncs
-    // orderbook_snapshot_sync: watchReceiver<()>,
-    // exchange_snapshot_sync: watchSender<()>,
 }
 
 impl DepthDriver {
@@ -36,11 +36,8 @@ impl DepthDriver {
             );
             exchanges.push(Rc::new(RefCell::new(exchange?)));
         }
-        Ok(DepthDriver {
-            exchanges,
-            // orderbook_snapshot_trigger,
-            // exchange_snapshot_trigger: snapshot_trigger,
-        })
+        let mut rt = Runtime::new().map_err(|_| Error::PathOrderBookDealSendFail)?;
+        Ok(DepthDriver { rt, exchanges })
     }
 
     pub async fn websocket_connect(&mut self) -> Result<(), ErrorInitialState> {

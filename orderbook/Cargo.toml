@@ -27,7 +27,6 @@ dhat.workspace = true
 market-objects.workspace = true
 internal-objects.workspace = true
 quoter-errors.workspace = true
-ring-buffer.workspace = true
 config.workspace = true
 testing-traits.workspace = true
 depth-generator.workspace = true
