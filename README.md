@@ -56,16 +56,10 @@ hacking a brownian motion stochastic process.
 
 Oscillating Depths rather then just upward and downward trends
 
-# Exchange Stubs
+# Exchange stubs and server
 
 Provides both HTTP and websocket endpoints for depths. Leverages depth generator
 as a dependency.
 
-# Exchange Server
-
 Dockerized exchange stub for full integration testing. Leverages exchange stub as a
 dependency.
-
-## Dependencies
-
-Core dependencies for the orderbook quoter server.
