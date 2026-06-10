@@ -4,53 +4,12 @@ use rust_decimal::{prelude::FromPrimitive, Decimal};
 use rustc_hash::FxHashMap;
 
 mod errors;
+mod level;
 use crate::errors::OrderBookError;
+use crate::level::{Level, LiquidityNode};
 
 use config::OrderbookConfig;
 use market_objects::DepthUpdate;
-
-const DEFAULT_LIQUIDITY_LEVEL_EXCHANGES: usize = 10;
-const DEFAULT_DECIMAL_PRECISION: u32 = 100;
-
-#[derive(Copy, Clone)]
-struct LiquidityNode {
-    q: Decimal,
-    l: u8,
-}
-
-macro_rules! new_liquidity_level {
-    ($exchanges:expr) => {
-        #[derive(Clone)]
-        struct Level<LiquidityNode> {
-            price: Decimal,
-            deque: [LiquidityNode; $exchanges],
-        }
-
-        impl Level<LiquidityNode> {
-            fn new(price_level: Decimal) -> Self {
-                let mut level = Level {
-                    price: price_level,
-                    deque: [LiquidityNode {
-                        q: Decimal::new(0, DEFAULT_DECIMAL_PRECISION),
-                        l: 0,
-                    }; $exchanges],
-                };
-
-                for i in 0..$exchanges {
-                    level.deque[i] = LiquidityNode {
-                        q: Decimal::new(0, DEFAULT_DECIMAL_PRECISION),
-                        l: i as u8,
-                    }
-                }
-
-                level
-            }
-        }
-    };
-}
-
-// each exchange has its own liquidity node for each price level
-new_liquidity_level!(DEFAULT_LIQUIDITY_LEVEL_EXCHANGES);
 pub struct OrderBook {
     asks: FxHashMap<Decimal, Level<LiquidityNode>>,
     bids: FxHashMap<Decimal, Level<LiquidityNode>>,
