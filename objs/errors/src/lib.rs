@@ -18,12 +18,6 @@ pub enum ErrorHotPath {
     ExchangeStreamSnapshot(String),
     #[error("Received non-text message from exchange")]
     ReceivedNonTextMessageFromExchange,
-    #[error("OrderBook Error: {0}")]
-    OrderBook(String),
-    #[error("Negative liquidity detected")]
-    OrderBookNegativeLiquidity,
-    #[error("Maximum traversal limit reached")]
-    OrderBookMaxTraversedReached,
     #[error("Deal send failed")]
     OrderBookDealSendFail,
 }
