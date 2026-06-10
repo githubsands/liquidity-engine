@@ -1,92 +1,16 @@
 # Orderbook Quoter Server
 
-## High Level
-
 Builds a live orderbook from http snapshots from N configurable exchanges and then updates the orderbook 
 through soft real time websocket depth updates. After a update the best ten asks and bids aswell as well 
 as the spread are provided through a grpc server endpoint
 
-## Lower Level
+## Libraries and components
 
-IO components: ExchangeStreams, and Quote GRPC Server are ran on seperate tokio runtimes in their own
-pinned threads.
-
-// todo: reason about the cores here and seek alternative setup 
-   -- too much information is being exchanged between cores during real time processing
-
-Orderbook is ran with multiplie threads. One for writing to the book the others for reading it.
-
-### Orderbook Structure
-
-// todo -- update my reasoning here ... on why i didn't just use a simple red black tree
-    or the previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10)
-
-## Configuration
-
-Exchange boots through a config by running `./orderbook-quoter-server --config=$(CONFIG_LOCATION)`. The 
-amount of exchanges in the exchange array must be equal to the orderbook's `exchange_count`. Every
-`depth` field must be equal in the exchanges and orderbook's depth field should cover the entire 
-expected trading range for the lifetime of this service. 
-
-The larger expected volatility the higher the orderbook's depth needs to be.
-
-```yaml       
-exchanges:
-  - client_name: "binance_usa_1"
-    exchange_name: 0
-    snapshot_enabled: true
-    http_client: true
-    snapshot_uri: "http://localhost:5000"
-    ws_uri: "wss://localhost:5001"
-    ws_poll_rate_milliseconds: 99
-    ws_presequenced_depth_buffer: 4000,
-    depth: 5000
-    buffer_size: 6000
-- client_name: "binance_usa_2"
-    exchange_name: 1
-    snapshot_enabled: true
-    http_client: true
-    snapshot_uri: "http://localhost:6000"
-    ws_uri: "wss://localhost:6001"
-    ws_poll_rate_milliseconds: 99
-    ws_presequenced_depth_buffer: 4000,
-    depth: 5000
-    buffer_size: 6000
-orderbook:
-  exchange_count: 2
-  depth: 5000
-  tick_size: 0.01
-  mid_price: 2700
-  ticker: "BTCUSDT"
-  ring_buffer:
-    ring_buffer_size: 1024
-    channel_buffer_size: 512
-grpc_server:
-  host_uri: "127.0.0.1:5000"
-```
-
-## Building
-
-Builds are done through the build script (build.rs). The script reads the config file and runs procedural macros on 
-the code base. The config file's "orderbook.exchange_count" and exchange's exchange array length must be equal or the
-build script will fail.
-
-Deployment team work flow goes as this: (1) edit the `config.yaml` with necessary exchanges and then run the build script 
-from the root directory (cargo build).
-
-Files changed by the build script are: 
-
-(1) orderbook/src/lib.rs
-
-## Components
-
-### 1. Exchange
-
-#### Exchange
+# Exchange
 
 Wrapper around exchange stream to handle websocket sinks and other functionality
 
-#### ExchangeStream
+# ExchangeStream
 
 Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
 but it currently is not implemented in the Orderbook/DepthDriver. 
@@ -94,7 +18,7 @@ but it currently is not implemented in the Orderbook/DepthDriver.
 Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
 sequencing of orderbook snapshots and depth updates through their timestamps
 
-### 2. DepthDriver
+# DepthDriver
 
 Provides a controlling interface to all exchange streams that push depths.
 
@@ -105,7 +29,7 @@ retriggering with correct sequencing (https://github.com/binance/binance-spot-ap
 
 (2) Exchange Stream websocket failure states.
 
-### 3. Orderbook
+# Orderbook
 
 features:
 
@@ -115,13 +39,15 @@ features:
 * precompile configurable fixed sized array level length by exchange connectivity count
 * preinitialized 
 
-### 4. Quote GRPC Server
+// todo -- update my reasoning here ... on why i didn't just use a simple red black tree or 
+   the previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10)
+
+
+# Quote GRPC Server
 
 Takes the spread and provides the best ten deals and asks to a grpc client
 
-## Testing
-
-### 1. Depth Generator
+# Depth Generator
 
 Generates depths in many different sequences: upward, downward through
 hacking a brownian motion stochastic process.
@@ -130,12 +56,12 @@ hacking a brownian motion stochastic process.
 
 Oscillating Depths rather then just upward and downward trends
 
-### 2. Exchange Stubs
+# Exchange Stubs
 
 Provides both HTTP and websocket endpoints for depths. Leverages depth generator
 as a dependency.
 
-### 3. Exchange Server
+# Exchange Server
 
 Dockerized exchange stub for full integration testing. Leverages exchange stub as a
 dependency.
