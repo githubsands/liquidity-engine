@@ -46,16 +46,18 @@ features:
 
 # Depth Pool
 
-* zero copy serialization
-* preallocated
-* ...
+features:
 
+* zero copy serialization for depth updates
+* preallocated arena
+* depth update reallocation object pool from preallocated arena
 
 # Quote GRPC Server
 
 Takes the spread and provides the best ten deals and asks to a grpc client
 
 # Depth Generator
+
 
 Generates depths in many different sequences: upward, downward through
 hacking a brownian motion stochastic process.
