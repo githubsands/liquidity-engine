@@ -4,8 +4,7 @@ use std::rc::Rc;
 use crossbeam_channel::Sender;
 use tracing::warn;
 
-use compio::runtime::{self, Runtime};
-
+use tokio::runtime::Builder;
 use tokio::sync::watch::{channel as watchChannel, Receiver as watchReceiver};
 use tokio::task;
 use tokio_context::context::Context;
@@ -16,7 +15,6 @@ use market_objects::DepthUpdate;
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 pub struct DepthDriver {
-    rt: Runtime,
     exchanges: Vec<Rc<RefCell<Exchange>>>,
 }
 
@@ -36,8 +34,29 @@ impl DepthDriver {
             );
             exchanges.push(Rc::new(RefCell::new(exchange?)));
         }
-        let rt = Runtime::new().map_err(|e| ErrorInitialState::WSConnection(e.to_string()))?;
-        Ok(DepthDriver { rt, exchanges })
+        Ok(DepthDriver { exchanges })
+    }
+
+    // run owns the driver's runtime: it builds a single-threaded tokio runtime and
+    // drives the full exchange lifecycle on it. callers (e.g. Core) just call run and
+    // block; they should not stand up a runtime of their own.
+    pub fn run(&mut self) -> Result<(), ErrorInitialState> {
+        let rt = Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|e| ErrorInitialState::WSConnection(e.to_string()))?;
+        let (mut async_ctx, _handle) = Context::new();
+        let local = task::LocalSet::new();
+        local.block_on(&rt, async move {
+            self.websocket_connect().await?;
+            self.subscribe_depths().await?;
+            self.build_orderbook().await?;
+            self.run_streams(&mut async_ctx)
+                .await
+                .map_err(|e| ErrorInitialState::WSConnection(e.to_string()))?;
+            Ok::<(), ErrorInitialState>(())
+        })
     }
 
     pub async fn websocket_connect(&mut self) -> Result<(), ErrorInitialState> {

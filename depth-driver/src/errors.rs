@@ -1,0 +1,5 @@
+pub enum DepthDriverError {
+    RuntimeFailed,
+
+
+}
