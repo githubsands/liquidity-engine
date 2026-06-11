@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 rkyv = "0.8.16"
+rust_decimal = "1.42.0"

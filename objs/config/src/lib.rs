@@ -14,7 +14,6 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct OrderbookConfig {
-    pub ring_buffer: RingBufferConfig,
     pub exchange_count: i64,
     pub depth: i64,
     pub mid_price: f64,
@@ -22,10 +21,16 @@ pub struct OrderbookConfig {
     pub ticker: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct RingBufferConfig {
-    pub ring_buffer_size: usize,
-    pub channel_buffer_size: usize,
+impl Default for OrderbookConfig {
+    fn default() -> Self {
+        OrderbookConfig {
+            exchange_count: 1,
+            depth: 5000,
+            mid_price: 2500.0,
+            tick_size: 0.01,
+            ticker: "OPENAI/USD".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

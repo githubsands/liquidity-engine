@@ -3,6 +3,18 @@ use rkyv::{
     deserialize, rancor::Error, ser::allocator::Arena, util::AlignedVec,
 };
 use rust_decimal::Decimal;
+pub struct DepthPool {
+    arena: Arena,
+}
+
+impl DepthPool {
+    fn new() -> Self {
+        DepthPool {
+            arena: Arena::new(),
+        }
+    }
+    fn allocate(&mut self) {}
+}
 
 /// rkyv "remote" adapter that archives a [`Decimal`] as its 16-byte little-endian
 /// representation. rust_decimal's own `rkyv` feature targets rkyv 0.7, so we bridge

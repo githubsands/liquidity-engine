@@ -2,22 +2,14 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ErrorHotPath {
-    #[error("Exchange No Snapshot: {0}")]
-    ExchangeNoSnapshot(String),
-    #[error("Exchange WS Error: {0}")]
-    ExchangeWSError(String),
-    #[error("Exchange WS Reconnect Error: {0}")]
-    ExchangeWSReconnectError(String),
     #[error("Serialization error: {0}")]
     Serialization(String),
     #[error("Quoter GRPC Error: {0}")]
     QuoterGRPCError(String),
     #[error("Quote Server Sink Error: {0}")]
     QuoteServerSinkError(String),
-    #[error("HTTP Snapshot error: {0}")]
+    #[error("Exchange Stream Snapshot Error: {0}")]
     ExchangeStreamSnapshot(String),
-    #[error("Received non-text message from exchange")]
-    ReceivedNonTextMessageFromExchange,
     #[error("Deal send failed")]
     OrderBookDealSendFail,
 }

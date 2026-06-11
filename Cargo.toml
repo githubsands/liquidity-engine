@@ -11,6 +11,7 @@ debug = true
 
 [workspace]
 members = [
+    "core",
     "quoter-grpc-server",
     "exchange",
     "depth-driver",
@@ -25,7 +26,7 @@ members = [
     "replicate",
     "sm",
 ]
-exclude = ["market-maker", "exchange-server"]
+exclude = ["exchange-server"]
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.8"
@@ -62,24 +63,39 @@ reqwest = { version = "0.11", features = ["json"] }
 tokio-tungstenite = "0.19.0"
 
 exchange = { path = "exchange" }
+
 depth-pool = { path = "depth-pool" }
 quoter-grpc-server = { path = "quoter-grpc-server" }
 market-objects = { path = "objs/market-objects" }
 internal-objects = { path = "objs/internal-objects" }
 quoter-errors = { path = "objs/errors" }
 config = { path = "objs/config" }
+depth-driver = { path = "depth-driver" }
+orderbook = { path = "orderbook" }
 
 testing-traits = { path = "testing/testing-traits" }
 depth-generator = { path = "testing/depth-generator" }
 exchange-stubs = { path = "testing/exchange-stubs" }
 
 [dependencies]
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1.14", features = ["full"] }
+tokio-context = { workspace = true }
 prost = "0.11"
 fixed = "1.29.0"
 bitflags = "2.9.1"
-clippy = "0.0.302"
 rust_decimal = "1.42.0"
+futures = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+io-context = { workspace = true }
+clap = "3.0"
+config = { workspace = true }
+internal-objects = { workspace = true }
+depth-driver = { workspace = true }
+orderbook = { workspace = true }
+quoter-grpc-server = { workspace = true }
 
 [build-dependencies]
 prost = "0.11"

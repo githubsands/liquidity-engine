@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
-use std::error::Error;
 use std::{pin::Pin, task::Poll};
+
+use crate::errors::ExchangeStreamError;
 
 use serde_json::from_str;
 
@@ -25,9 +26,6 @@ use config::ExchangeConfig;
 use market_objects::{
     DepthUpdate, HTTPSnapShotDepthResponseBinance, WSDepthUpdateByBit, WSOrderBookUpdatesBinance,
 };
-use quoter_errors::*;
-
-type orderbook_snapshot_error = Box<dyn Error + Sync + Send + 'static>;
 
 pin_project! {
     #[must_use = "streams do nothing unless polled"]
@@ -45,6 +43,8 @@ pin_project! {
         pub stream_count: u8,
         pub websocket_uri: String,
         pub watched_pair: String,
+
+        pub buffer: ArrayVec<DepthUpdate, 1000>,
 
         pub snapshot_sync: Option<stateSync<()>>,
 
@@ -68,7 +68,7 @@ impl ExchangeStream {
         orders_producer: Sender<DepthUpdate>,
         snapshot_sync: stateSync<()>,
         _http_client_option: bool,
-    ) -> Result<Self, ErrorInitialState> {
+    ) -> Result<Self, ExchangeStreamError> {
         let mut http_client: Option<Client> = None;
         if exchange_config.snapshot_enabled {
             info!("snapshot is enabled building http client");
@@ -78,6 +78,7 @@ impl ExchangeStream {
             client_name: exchange_config.client_name.clone(),
             exchange_name: exchange_config.exchange_name,
             snapshot_sync: Some(snapshot_sync),
+            buffer: ArrayVec::new(),
             websocket_depth_buffer: ArrayVec::new(),
             buffer_websocket_depths: false,
             snapshot_enabled: exchange_config.snapshot_enabled,
@@ -98,7 +99,7 @@ impl ExchangeStream {
     }
     pub async fn start(
         &mut self,
-    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ErrorInitialState>
+    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ExchangeStreamError>
     {
         let config = WebSocketConfig {
             max_send_queue: None,
@@ -120,12 +121,12 @@ impl ExchangeStream {
             }
             Err(ws_error) => {
                 error!("failed to connect to exchange {}", self.websocket_uri);
-                return Err(ErrorInitialState::WSConnection(ws_error.to_string()));
+                return Err(ExchangeStreamError::WSConnection(ws_error.to_string()));
             }
         };
     }
 
-    pub async fn run_snapshot(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn run_snapshot(&mut self) -> Result<(), ExchangeStreamError> {
         self.buffer_websocket_depths = true;
         let mut success = false;
         while !success {
@@ -147,7 +148,7 @@ impl ExchangeStream {
                         "failed to get websocket depths from exchange {}",
                         pull_error
                     );
-                    return Err(ErrorInitialState::Snapshot(pull_error.to_string()));
+                    return Err(ExchangeStreamError::Snapshot(pull_error.to_string()));
                 }
             }
         }
@@ -161,7 +162,7 @@ impl ExchangeStream {
         self.buffer_websocket_depths = false;
     }
 
-    pub async fn run_with_snapshot(&mut self) -> Result<(), ErrorHotPath> {
+    pub async fn run_with_snapshot(&mut self) -> Result<(), ExchangeStreamError> {
         let snapshot_sync = &mut self.snapshot_sync.as_mut().unwrap();
         tokio::select! {
                 _ = snapshot_sync.changed()=> {
@@ -181,7 +182,7 @@ impl ExchangeStream {
                             Err(pull_error) => {
                                 if pull_retry_count > self.pull_retry_count {
                                     error!("reached maxed snapshot pull count retry for exchange {} received error: {}", self.exchange_name, pull_error);
-                                    return Err(ErrorHotPath::ExchangeStreamSnapshot(pull_error.to_string()))
+                                    return Err(ExchangeStreamError::ExchangeStreamSnapshot(pull_error.to_string()))
                                 }
                                     pull_retry_count += 1;
                                     warn!("failed to get websocket depths from exchange {}", pull_error);
@@ -203,17 +204,17 @@ impl ExchangeStream {
                     match stream_poll_state {
                         WSStreamState::Success | WSStreamState::WaitingForDepth => return Ok(()),
                         _ => {
-                            return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()))
+                            return Err(ExchangeStreamError::ExchangeWSError("tbd".to_string()))
                         }
                     }
                 } else {
-                    return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
+                    return Err(ExchangeStreamError::ExchangeWSError("tbd".to_string()));
                 }
             }
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), ErrorHotPath> {
+    pub async fn run(&mut self) -> Result<(), ExchangeStreamError> {
         tokio::time::sleep(Duration::from_millis(self.ws_poll_rate)).await;
         if let Some(stream_poll_state) = self.next().await {
             match stream_poll_state {
@@ -223,12 +224,12 @@ impl ExchangeStream {
                 }
             }
         }
-        return Err(ErrorHotPath::ExchangeWSError("tbd".to_string()));
+        return Err(ExchangeStreamError::ExchangeWSError("tbd".to_string()));
     }
 
     async fn pull_depths(
         &mut self,
-    ) -> Result<impl Iterator<Item = DepthUpdate>, orderbook_snapshot_error> {
+    ) -> Result<impl Iterator<Item = DepthUpdate>, ExchangeStreamError> {
         let snapshot_depths = self.orderbook_snapshot().await?;
         let interleaved_depths = interleave(snapshot_depths.0, snapshot_depths.1);
         Ok(interleaved_depths)
@@ -246,7 +247,7 @@ impl ExchangeStream {
             impl Iterator<Item = DepthUpdate>,
             impl Iterator<Item = DepthUpdate>,
         ),
-        orderbook_snapshot_error,
+        ExchangeStreamError,
     > {
         let req_builder = self
             .http_client
@@ -258,11 +259,10 @@ impl ExchangeStream {
             Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
                 (snapshot_response, 1) => {
                     if snapshot_response.status() != 200 {
-                        // TODO: Get rid of this boxed error
-                        return Err(Box::new(ErrorHotPath::ExchangeStreamSnapshot(
+                        return Err(ExchangeStreamError::ExchangeStreamSnapshot(
                             "failed to get snapshot through http. received error code: {}"
                                 .to_string(),
-                        )));
+                        ));
                     }
                     let body = snapshot_response.text().await?;
                     let snapshot: HTTPSnapShotDepthResponseBinance = from_str(&body)?;
@@ -283,20 +283,20 @@ impl ExchangeStream {
                         "failed to create snapshot due to exchange_name {}",
                         self.exchange_name
                     );
-                    return Err(Box::new(ErrorInitialState::Snapshot(
+                    return Err(ExchangeStreamError::Snapshot(
                         "Failed to create snapshot".to_string(),
-                    )));
+                    ));
                 }
             },
             Err(err) => {
                 error!("failed to reconcile snapshot result: {}", err);
-                return Err(Box::new(ErrorInitialState::Snapshot(err.to_string())));
+                return Err(ExchangeStreamError::Snapshot(err.to_string()));
             }
         }
     }
     pub async fn reconnect(
         &mut self,
-    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ErrorHotPath> {
+    ) -> Result<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, ExchangeStreamError> {
         let config = WebSocketConfig {
             max_send_queue: None,
             max_message_size: None,
@@ -317,7 +317,7 @@ impl ExchangeStream {
             }
             Err(ws_error) => {
                 error!("failed to connect to exchange {}", self.websocket_uri);
-                return Err(ErrorHotPath::ExchangeWSReconnectError(ws_error.to_string()));
+                return Err(ExchangeStreamError::ExchangeWSReconnectError(ws_error.to_string()));
             }
         };
     }

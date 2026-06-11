@@ -12,7 +12,7 @@ use tracing::{error, info};
 use crate::stream::ExchangeStream;
 use config::ExchangeConfig;
 use market_objects::DepthUpdate;
-use quoter_errors::{ErrorHotPath, ErrorInitialState};
+use crate::errors::ExchangeStreamError;
 
 const SUBSCRIBE: &'static str = "SUBSCRIBE";
 
@@ -28,7 +28,7 @@ impl Exchange {
         exchange_config: &ExchangeConfig,
         depth_producer: Sender<DepthUpdate>,
         watch_trigger: watchReceiver<()>,
-    ) -> Result<Exchange, ErrorInitialState> {
+    ) -> Result<Exchange, ExchangeStreamError> {
         let inner = ExchangeStream::new(
             exchange_config,
             depth_producer.clone(),
@@ -42,12 +42,12 @@ impl Exchange {
             watched_pair: exchange_config.watched_pair.clone(),
         })
     }
-    pub async fn start(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn start(&mut self) -> Result<(), ExchangeStreamError> {
         let ws_sink = self.inner.start().await?;
         self.ws_sink = Some(ws_sink);
         Ok(())
     }
-    pub async fn subscribe_orderbooks(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn subscribe_orderbooks(&mut self) -> Result<(), ExchangeStreamError> {
         // TODO: Add many different subscription messages here and a configurable trigger
         info!(
             "exchange {} subscribing to the orderbooks",
@@ -63,7 +63,7 @@ impl Exchange {
         let exchange_response = self
             .ws_sink
             .as_mut()
-            .ok_or(ErrorInitialState::ExchangeController)?
+            .ok_or(ExchangeStreamError::ExchangeController)?
             .send(Message::Text(json_obj_binance.to_string()))
             .await;
         // TODO: handle this differently;
@@ -78,7 +78,7 @@ impl Exchange {
         Ok(())
     }
 
-    pub async fn run_snapshot(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn run_snapshot(&mut self) -> Result<(), ExchangeStreamError> {
         self.inner.run_snapshot().await?;
         Ok(())
     }
@@ -87,22 +87,22 @@ impl Exchange {
         self.inner.push_buffered_ws_depths().await;
     }
 
-    pub async fn stream_depths(&mut self) -> Result<(), ErrorHotPath> {
+    pub async fn stream_depths(&mut self) -> Result<(), ExchangeStreamError> {
         info!("streaming depths");
         self.inner.run().await?;
         Ok(())
     }
 
-    async fn reconnect(&mut self) -> Result<(), ErrorHotPath> {
+    async fn reconnect(&mut self) -> Result<(), ExchangeStreamError> {
         let ws_sink = self.inner.reconnect().await?;
         self.ws_sink = Some(ws_sink);
         Ok(())
     }
 
-    pub async fn close(&mut self) -> Result<(), ErrorInitialState> {
+    pub async fn close(&mut self) -> Result<(), ExchangeStreamError> {
         self.ws_sink
             .as_mut()
-            .ok_or(ErrorInitialState::ExchangeController)?
+            .ok_or(ExchangeStreamError::ExchangeController)?
             .send(Message::Close(None));
         Ok(())
     }

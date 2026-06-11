@@ -173,7 +173,7 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
             }
             depth_driver.subscribe_depths().await;
             depth_driver.build_orderbook().await;
-            if let match stream_result = depth_driver.run_streams(&mut async_ctx).await;
+            let stream_result = depth_driver.run_streams(&mut async_ctx).await;
             match stream_result {
                 Ok(_) => depth_driver.close_exchanges().await,
                 Err(stream_error) => {

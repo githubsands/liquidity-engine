@@ -36,7 +36,7 @@ impl DepthDriver {
             );
             exchanges.push(Rc::new(RefCell::new(exchange?)));
         }
-        let mut rt = Runtime::new().map_err(|_| Error::PathOrderBookDealSendFail)?;
+        let rt = Runtime::new().map_err(|e| ErrorInitialState::WSConnection(e.to_string()))?;
         Ok(DepthDriver { rt, exchanges })
     }
 
@@ -58,7 +58,6 @@ impl DepthDriver {
         Ok(())
     }
 
-    // todo: this can be done on multiplie threads?
     pub async fn build_orderbook(&mut self) -> Result<(), ErrorInitialState> {
         for exchange in self.exchanges.iter_mut() {
             exchange.as_ref().borrow_mut().run_snapshot().await?;
