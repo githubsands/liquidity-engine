@@ -34,13 +34,21 @@ retriggering with correct sequencing (https://github.com/binance/binance-spot-ap
 features:
 
 * `no_std`
-* flattened stack only data structures
+* flattened stack only hashmap where each price point (or level) is a key and its value is a 
+   array of exchange liquidity nodes
 * contiguous
 * precompile configurable fixed sized array level length by exchange connectivity count
 * preinitialized 
+* `O(1) + O(EC)` price point reads and writes time complexity where `EC` = `exchange count`
 
-// todo -- update my reasoning here ... on why i didn't just use a simple red black tree or 
-   the previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10)
+
+// previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10) here from 2023
+
+# Depth Pool
+
+* zero copy serialization
+* preallocated
+* ...
 
 
 # Quote GRPC Server
