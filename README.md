@@ -6,32 +6,9 @@ as the spread are provided through a grpc server endpoint
 
 ## Libraries and components
 
-# Exchange
-
-Wrapper around exchange stream to handle websocket sinks and other functionality
-
-# ExchangeStream
-
-Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
-but it currently is not implemented in the Orderbook/DepthDriver. 
-
-Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
-sequencing of orderbook snapshots and depth updates through their timestamps
-
-# DepthDriver
-
-Provides a controlling interface to all exchange streams that push depths.
-
-#### Future work:
-
-(1) Needs to handle orderbook reset and orderbook snapshot
-retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
-
-(2) Exchange Stream websocket failure states.
-
 # Orderbook
 
-features:
+features
 
 * `no_std`
 * flattened stack only hashmap where each price point (or level) is a key and its value is a 
@@ -41,23 +18,42 @@ features:
 * preinitialized 
 * `O(1) + O(EC)` price point reads and writes time complexity where `EC` = `exchange count`
 
-
 // previous [initial linked list idea](https://github.com/githubsands/liquidity-engine/pull/10) here from 2023
 
 # Depth Pool
 
-features:
+features
 
-* zero copy serialization for depth updates
+* zero copy serialization for depth updates preallocated arena
 * preallocated arena
-* depth update reallocation object pool from preallocated arena
 
-# Quote GRPC Server
+# DepthDriver
 
-Takes the spread and provides the best ten deals and asks to a grpc client
+revamp / work in progress
+
+Provides a controlling interface to all exchange streams that push depths.
+
+# ExchangeStream
+
+Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
+but it currently is not implemented in the Orderbook/DepthDriver. 
+
+Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
+sequencing of orderbook snapshots and depth updates through their timestamps
+
+
+#### Future work:
+
+(1) Needs to handle orderbook reset and orderbook snapshot
+retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
+
+(2) Exchange Stream websocket failure states.
+
+# Deal worker
+
+revamp / work in progress - takes the spread and provides the best ten deals through a grpc server 
 
 # Depth Generator
-
 
 Generates depths in many different sequences: upward, downward through
 hacking a brownian motion stochastic process.
