@@ -1,0 +1,13 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+depth-driver.workspace = true
+orderbook.workspace = true
+config.workspace = true
+market-objects.workspace = true
+quoter-errors.workspace = true
+crossbeam-channel.workspace = true
+tokio.workspace = true
