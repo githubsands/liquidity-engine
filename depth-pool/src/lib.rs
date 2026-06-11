@@ -2,13 +2,32 @@ use rkyv::{
     Archive, Deserialize, Serialize, access, access_unchecked, api::high::to_bytes_with_alloc,
     deserialize, rancor::Error, ser::allocator::Arena, util::AlignedVec,
 };
+use rust_decimal::Decimal;
+
+/// rkyv "remote" adapter that archives a [`Decimal`] as its 16-byte little-endian
+/// representation. rust_decimal's own `rkyv` feature targets rkyv 0.7, so we bridge
+/// to rkyv 0.8 through its public `serialize`/`deserialize` byte accessors.
+#[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Decimal, derive(Debug))]
+struct RkyvDecimal {
+    #[rkyv(getter = Decimal::serialize)]
+    bytes: [u8; 16],
+}
+
+impl From<RkyvDecimal> for Decimal {
+    fn from(RkyvDecimal { bytes }: RkyvDecimal) -> Self {
+        Decimal::deserialize(bytes)
+    }
+}
 
 #[derive(Archive, Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
-#[rkyv(compare(PartialEq), derive(Debug, PartialEq))]
+#[rkyv(derive(Debug))]
 pub struct DepthUpdate {
     pub k: u8,
-    pub p: f64,
-    pub q: f64,
+    #[rkyv(with = RkyvDecimal)]
+    pub p: Decimal,
+    #[rkyv(with = RkyvDecimal)]
+    pub q: Decimal,
     pub l: u8,
     pub s: bool,
 }
@@ -17,8 +36,8 @@ impl Default for DepthUpdate {
     fn default() -> Self {
         DepthUpdate {
             k: 0,
-            p: 0.0,
-            q: 0.0,
+            p: Decimal::ZERO,
+            q: Decimal::ZERO,
             l: 0,
             s: false,
         }
@@ -59,8 +78,8 @@ mod tests {
     fn sample() -> DepthUpdate {
         DepthUpdate {
             k: 1,
-            p: 27123.45,
-            q: 0.001234,
+            p: Decimal::new(2712345, 2), // 27123.45
+            q: Decimal::new(1234, 6),    // 0.001234
             l: 3,
             s: true,
         }
@@ -73,12 +92,10 @@ mod tests {
 
         let archived = access_depth_update(&bytes).expect("access");
 
-        assert_eq!(archived, &update);
         assert_eq!(archived.k, 1);
         assert_eq!(archived.l, 3);
         assert_eq!(archived.s, true);
-        assert_eq!(archived.p.to_native(), 27123.45);
-        assert_eq!(archived.q.to_native(), 0.001234);
+        assert_eq!(archived.to_owned().expect("to_owned"), update);
     }
 
     #[test]
@@ -88,6 +105,8 @@ mod tests {
         let archived = access_depth_update(&bytes).expect("access");
         let recovered = deserialize_depth_update(archived).expect("deserialize");
         assert_eq!(recovered, update);
+        assert_eq!(recovered.p, Decimal::new(2712345, 2));
+        assert_eq!(recovered.q, Decimal::new(1234, 6));
         assert_eq!(archived.to_owned().expect("to_owned"), update);
     }
 
@@ -97,7 +116,10 @@ mod tests {
         let bytes = update.to_bytes().expect("serialize");
         let checked = access_depth_update(&bytes).expect("access");
         let unchecked = unsafe { access_depth_update_unchecked(&bytes) };
-        assert_eq!(checked, unchecked);
+        assert_eq!(
+            checked.to_owned().expect("checked"),
+            unchecked.to_owned().expect("unchecked")
+        );
     }
 
     #[test]
@@ -109,7 +131,7 @@ mod tests {
         assert_eq!(a.as_slice(), b.as_slice());
 
         let archived = access_depth_update(&b).expect("access");
-        assert_eq!(archived, &update);
+        assert_eq!(archived.to_owned().expect("to_owned"), update);
     }
 
     #[test]
