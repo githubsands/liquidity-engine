@@ -1,8 +1,0 @@
-[package]
-name = "orderbook-slabs"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-fixed = "1.29.0"
-rustc-hash.workspace = true

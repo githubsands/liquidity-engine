@@ -16,7 +16,6 @@ members = [
     "depth-driver",
     "depth-pool",
     "orderbook",
-    "orderbook-slabs",
     "testing/depth-generator",
     "testing/exchange-stubs",
     "objs/internal-objects",
