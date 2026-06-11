@@ -29,9 +29,9 @@ features
 
 # DepthDriver
 
-revamp / work in progress
+features
 
-Provides a controlling interface to all exchange streams that push depths.
+* concurrent network io from `io uring` through `compio's` executor
 
 # ExchangeStream
 
@@ -54,6 +54,8 @@ retriggering with correct sequencing (https://github.com/binance/binance-spot-ap
 revamp / work in progress - takes the spread and provides the best ten deals through a grpc server 
 
 # Depth Generator
+
+
 
 Generates depths in many different sequences: upward, downward through
 hacking a brownian motion stochastic process.
