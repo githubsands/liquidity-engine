@@ -35,19 +35,11 @@ features
 
 # ExchangeStream
 
-Runs both http snapshot streams and websocket streams. Can handle retriggering the http snapshot stream 
-but it currently is not implemented in the Orderbook/DepthDriver. 
+features
 
-Future work: Ideally these streams are done purely on the stack but this must be verified. Correct
-sequencing of orderbook snapshots and depth updates through their timestamps
-
-
-#### Future work:
-
-(1) Needs to handle orderbook reset and orderbook snapshot
-retriggering with correct sequencing (https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#how-to-manage-a-local-order-book-correctly)
-
-(2) Exchange Stream websocket failure states.
+* asynchronous 
+* orderbook snap shots through http
+* real time depth updates
 
 # Deal worker
 
@@ -55,14 +47,10 @@ revamp / work in progress - takes the spread and provides the best ten deals thr
 
 # Depth Generator
 
+features
 
-
-Generates depths in many different sequences: upward, downward through
-hacking a brownian motion stochastic process.
-
-##### Future Work:
-
-Oscillating Depths rather then just upward and downward trends
+*  depth update generation in many different sequences: upward, downward by
+hacking a brownian motion stochastic process
 
 # Exchange stubs and server
 
