@@ -24,33 +24,33 @@ features
 
 features
 
-* zero copy serialization for depth updates preallocated arena
-* preallocated arena
+* zero copy serialization for depth updates and preallocated arena through [rkyv](https://github.com/rkyv/rkyv)
 
 # DepthDriver
 
 features
 
-* concurrent network io from `io uring` through `compio's` executor
+* concurrent network io from `io uring` through [compio](https://github.com/compio-rs/compio/) executor
 
 # ExchangeStream
 
 features
 
-* asynchronous 
 * orderbook snap shots through http
-* real time depth updates
+* real time depth updates from websocket connections
 
 # Deal worker
 
-revamp / work in progress - takes the spread and provides the best ten deals through a grpc server 
+revamp / work in progress - takes the spread and provides the best ten deals through a grpc server ... 
+
+currrently reseaching what lock free data structures and algorithms to use 
 
 # Depth Generator
 
 features
 
 *  depth update generation in many different sequences: upward, downward by
-hacking a brownian motion stochastic process
+   hacking a brownian motion stochastic process for testing
 
 # Exchange stubs and server
 
