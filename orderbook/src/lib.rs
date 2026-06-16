@@ -5,14 +5,20 @@ use rustc_hash::FxHashMap;
 
 mod errors;
 mod level;
+
 use crate::errors::OrderBookError;
 use crate::level::{Level, LiquidityNode};
 
 use config::OrderbookConfig;
 use market_objects::DepthUpdate;
+
 pub struct OrderBook {
     asks: FxHashMap<Decimal, Level<LiquidityNode>>,
     bids: FxHashMap<Decimal, Level<LiquidityNode>>,
+
+    asks_mid: Decimal,
+    bids_mid: Decimal,
+
     tick_size: f64,
 }
 
@@ -27,6 +33,10 @@ impl OrderBook {
             OrderBook {
                 asks: asks,
                 bids: bids,
+
+                asks_mid: Decimal::MAX,
+                bids_mid: Decimal::ZERO,
+
                 tick_size: config.tick_size,
             },
             n1,
@@ -49,7 +59,7 @@ impl OrderBook {
     ) {
         let mut asks: FxHashMap<Decimal, Level<LiquidityNode>> = FxHashMap::default();
         let mut current_level = mid_level;
-        let mut max_ask_level = Decimal::from_f64(0.0).unwrap();
+        let mut max_ask_level = Decimal::ZERO;
         for i in 0..=depth as u64 {
             if i == 0 {
                 let level = Level::new(current_level);
@@ -66,7 +76,7 @@ impl OrderBook {
 
         // build the opposite side of the mid level for asks
         current_level = mid_level;
-        let mut min_ask_level = Decimal::from_f64(0.0).unwrap();
+        let mut min_ask_level = Decimal::ZERO;
         for i in 0..=depth as u64 {
             if i == 0 {
                 continue;
@@ -82,7 +92,7 @@ impl OrderBook {
         // building bid side
         let mut bids: FxHashMap<Decimal, Level<LiquidityNode>> = FxHashMap::default();
         current_level = mid_level;
-        let mut min_bid_level = Decimal::from_f64(0.0).unwrap();
+        let mut min_bid_level = Decimal::ZERO;
         for i in 0..=depth as u64 {
             if i == 0 {
                 let level = Level::new(current_level);
@@ -99,7 +109,7 @@ impl OrderBook {
 
         // build the opposite side of the mid level for bids
         current_level = mid_level;
-        let mut max_bid_level = Decimal::from_f64(0.0).unwrap();
+        let mut max_bid_level = Decimal::ZERO;
         for i in 0..=depth as u64 {
             if i == 0 {
                 continue;
@@ -181,19 +191,19 @@ impl OrderBook {
     }
     */
 
-    // todo: upon depth_update creation - it should serialize into a a decimal some how
     #[inline]
     fn ask_update(&mut self, depth_update: DepthUpdate) -> Result<(), OrderBookError> {
+        let p = depth_update.p;
         if let Some(asks) = self
             .asks
-            .get_mut(&Decimal::from_f64(depth_update.p).unwrap())
+            .get_mut(&p)
         {
             asks.deque
                 .iter_mut()
                 .find(|liquidity_node| liquidity_node.l == depth_update.l)
                 .map(|liquidity_node| {
-                    let liquidity = liquidity_node.q + Decimal::from_f64(depth_update.q).unwrap();
-                    if liquidity < Decimal::from_f64(0.0).unwrap() {
+                    let liquidity = liquidity_node.q + p;
+                    if liquidity < Decimal::ZERO {
                         return Err(OrderBookError::NegativeLiquidity);
                     }
                     liquidity_node.q = liquidity;
@@ -201,6 +211,10 @@ impl OrderBook {
                 });
             asks.deque
                 .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
+            // todo: record mid for each exchange?
+            if p < self.asks_mid {
+                self.asks_mid = p
+            }
         } else {
             return Err(OrderBookError::NoLevel);
         }
@@ -209,16 +223,17 @@ impl OrderBook {
 
     #[inline]
     fn bid_update(&mut self, depth_update: DepthUpdate) -> Result<(), OrderBookError> {
+        let p = depth_update.p;
         if let Some(bids) = self
             .bids
-            .get_mut(&Decimal::from_f64(depth_update.p).unwrap())
+            .get_mut(&p)
         {
             bids.deque
                 .iter_mut()
                 .find(|liquidity_node| liquidity_node.l == depth_update.l)
                 .map(|liquidity_node| {
-                    let liquidity = liquidity_node.q + Decimal::from_f64(depth_update.q).unwrap();
-                    if liquidity < Decimal::from_f64(0.0).unwrap() {
+                    let liquidity = liquidity_node.q + p;
+                    if liquidity < Decimal::ZERO {
                         return Err(OrderBookError::NegativeLiquidity);
                     }
                     liquidity_node.q = liquidity;
@@ -226,6 +241,9 @@ impl OrderBook {
                 });
             bids.deque
                 .sort_by(|prev, next| next.q.partial_cmp(&prev.q).unwrap());
+            if p > self.bids_mid {
+                self.bids_mid = p
+            }
         } else {
             return Err(OrderBookError::NoLevel);
         }

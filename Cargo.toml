@@ -23,8 +23,6 @@ members = [
     "objs/market-objects",
     "objs/errors",
     "objs/config",
-    "replicate",
-    "sm",
 ]
 exclude = ["exchange-server"]
 

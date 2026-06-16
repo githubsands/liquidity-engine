@@ -1,6 +1,7 @@
 use market_objects::DepthUpdate;
 use rand::{thread_rng, Rng};
 use rand_distr::{Distribution, Normal};
+use rust_decimal::{prelude::FromPrimitive, Decimal};
 
 extern crate rand;
 
@@ -70,8 +71,8 @@ impl DepthMessageGenerator {
         };
         DepthUpdate {
             k: kind,
-            p: DepthMessageGenerator::round_to_hundreth(price as f64),
-            q: volume as f64,
+            p: DepthMessageGenerator::round_to_hundreth(price),
+            q: Decimal::from_f64(volume).unwrap_or_default(),
             l: location,
             s: false,
         }
@@ -89,8 +90,8 @@ impl DepthMessageGenerator {
         };
         DepthUpdate {
             k: kind,
-            p: round_to_hundreth(price as f64),
-            q: volume as f64,
+            p: round_to_hundreth(price),
+            q: Decimal::from_f64(volume).unwrap_or_default(),
             l: location,
             s: false,
         }
@@ -114,8 +115,8 @@ impl DepthMessageGenerator {
             .collect();
         (asks, bids)
     }
-    fn round_to_hundreth(n: f64) -> f64 {
-        (n * 100.0).round() / 100.0
+    fn round_to_hundreth(n: f64) -> Decimal {
+        Decimal::from_f64(n).unwrap_or_default().round_dp(2)
     }
     pub fn depth_balanced_orderbook(
         &mut self,
@@ -126,14 +127,14 @@ impl DepthMessageGenerator {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
         for i in 1..=exchange_locations {
-            let mut current_level: f64 = mid_point as f64; // reset the mid point for each exchange
+            let mut current_level: f64 = mid_point as f64;
             for _ in 0..depth {
                 let normal = Normal::new(0.0, self.vol_std).unwrap();
                 let volume_diff = normal.sample(&mut thread_rng()).abs();
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 0;
-                depth_update.p = current_level;
-                depth_update.q = volume_diff;
+                depth_update.p = Decimal::from_f64(current_level).unwrap_or_default();
+                depth_update.q = Decimal::from_f64(volume_diff).unwrap_or_default();
                 depth_update.l = i as u8;
                 depth_update.s = true;
                 asks.push(depth_update);
@@ -147,8 +148,8 @@ impl DepthMessageGenerator {
                 let volume_diff = normal.sample(&mut thread_rng()).abs();
                 let mut depth_update = DepthUpdate::default();
                 depth_update.k = 1;
-                depth_update.p = current_level;
-                depth_update.q = volume_diff;
+                depth_update.p = Decimal::from_f64(current_level).unwrap_or_default();
+                depth_update.q = Decimal::from_f64(volume_diff).unwrap_or_default();
                 depth_update.l = i2 as u8;
                 depth_update.s = true;
                 bids.push(depth_update);
@@ -164,26 +165,22 @@ impl DepthMessageGenerator {
         let mut asks: Vec<DepthUpdate> = vec![];
         let mut bids: Vec<DepthUpdate> = vec![];
 
-        // build corresponding bids from the asks that are on the book
         for depth in snapshot.0 {
             asks.push(DepthUpdate {
                 k: 0,
                 p: depth.p,
-                q: -1.0 * (depth.q / 2.0), // stimulate asks orders being filled on an exchange. a
-                // negative update that does not exceed or already
-                // existing liquidity
+                q: -(depth.q / Decimal::from(2)),
                 l: depth.l,
-                s: false, // not a snapshot but a depth update (false)
+                s: false,
             })
         }
-        // build corresponding asks from the bids that are on the book
         for depth in snapshot.1 {
             bids.push(DepthUpdate {
                 k: 1,
                 p: depth.p,
-                q: -1.0 * (depth.q / 2.0), // stimulate bid orders being filled on an exchange...
+                q: -(depth.q / Decimal::from(2)),
                 l: depth.l,
-                s: false, // not a snapshot but a depth update (false)
+                s: false,
             })
         }
         return (asks, bids);
@@ -203,15 +200,15 @@ impl DepthMessageGenerator {
         let dist = Normal::new(0.0, 1.0).unwrap();
         let depth_update_asks_0 = DepthUpdate {
             k: 0,
-            p: s_0,
-            q: 30.0,
+            p: Decimal::from_f64(s_0).unwrap_or_default(),
+            q: Decimal::from(30),
             l: 1,
             s: false,
         };
         let depth_update_bids_0 = DepthUpdate {
             k: 1,
-            p: s_0,
-            q: 30.0,
+            p: Decimal::from_f64(s_0).unwrap_or_default(),
+            q: Decimal::from(30),
             l: 1,
             s: false,
         };
@@ -234,14 +231,14 @@ impl DepthMessageGenerator {
                 asks.push(DepthUpdate {
                     k: 0,
                     p: DepthMessageGenerator::round_to_hundreth(price_current),
-                    q: 30.0,
+                    q: Decimal::from(30),
                     l: i,
                     s: false,
                 });
                 bids.push(DepthUpdate {
                     k: 1,
                     p: DepthMessageGenerator::round_to_hundreth(price_current),
-                    q: 30.0,
+                    q: Decimal::from(30),
                     l: i,
                     s: false,
                 })
@@ -250,14 +247,14 @@ impl DepthMessageGenerator {
                 asks.push(DepthUpdate {
                     k: 0,
                     p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
-                    q: -30.0,
+                    q: -Decimal::from(30),
                     l: i,
                     s: false,
                 });
                 bids.push(DepthUpdate {
                     k: 1,
                     p: DepthMessageGenerator::round_to_hundreth(price_current - spread),
-                    q: -30.0,
+                    q: -Decimal::from(30),
                     l: i,
                     s: false,
                 })
@@ -280,15 +277,15 @@ impl DepthMessageGenerator {
         let dist = Normal::new(0.0, 1.0).unwrap();
         let depth_update_asks_0 = DepthUpdate {
             k: 0,
-            p: s_0,
-            q: 30.0,
+            p: Decimal::from_f64(s_0).unwrap_or_default(),
+            q: Decimal::from(30),
             l: 1,
             s: false,
         };
         let depth_update_bids_0 = DepthUpdate {
             k: 1,
-            p: s_0,
-            q: 30.0,
+            p: Decimal::from_f64(s_0).unwrap_or_default(),
+            q: Decimal::from(30),
             l: 1,
             s: false,
         };
@@ -311,14 +308,14 @@ impl DepthMessageGenerator {
                 asks.push(DepthUpdate {
                     k: 0,
                     p: round_to_hundreth(price_current),
-                    q: 30.0,
+                    q: Decimal::from(30),
                     l: i,
                     s: false,
                 });
                 bids.push(DepthUpdate {
                     k: 1,
                     p: round_to_hundreth(price_current),
-                    q: 30.0,
+                    q: Decimal::from(30),
                     l: i,
                     s: false,
                 })
@@ -327,14 +324,14 @@ impl DepthMessageGenerator {
                 asks.push(DepthUpdate {
                     k: 0,
                     p: round_to_hundreth(price_current - spread),
-                    q: -30.0,
+                    q: -Decimal::from(30),
                     l: i,
                     s: false,
                 });
                 bids.push(DepthUpdate {
                     k: 1,
                     p: round_to_hundreth(price_current - spread),
-                    q: -30.0,
+                    q: -Decimal::from(30),
                     l: i,
                     s: false,
                 })
@@ -348,8 +345,8 @@ fn round(num: f64, place: f64) -> f64 {
     (num * place).round() / (place)
 }
 
-fn round_to_hundreth(num: f64) -> f64 {
-    (num * 100.0).round() / 1000.0
+fn round_to_hundreth(num: f64) -> Decimal {
+    Decimal::from_f64(num).unwrap_or_default().round_dp(2)
 }
 
 impl Default for DepthMessageGenerator {

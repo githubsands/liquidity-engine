@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_this_or_that::as_f64;
 use std::default::Default;
 use std::fmt::{Display, Error as ErrorFMT, Formatter};
+use rust_decimal::Decimal;
 
 use tokio_tungstenite::tungstenite::protocol::Message;
 
@@ -14,8 +15,8 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 // s: snapshot update vs websocket update
 pub struct DepthUpdate {
     pub k: u8,
-    pub p: f64,
-    pub q: f64,
+    pub p: Decimal,
+    pub q: Decimal,
     pub l: u8,
     pub s: bool,
 }
@@ -24,8 +25,8 @@ impl Default for DepthUpdate {
     fn default() -> Self {
         DepthUpdate {
             k: 0,
-            p: 0.0,
-            q: 0.0,
+            p: Decimal::ZERO,
+            q: Decimal::ZERO,
             l: 0,
             s: false,
         }
@@ -54,10 +55,8 @@ pub struct WSOrderBookUpdateBinanceSingleton {
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct WSOrderBookUpdateBinanceSingleton {
-    #[serde(deserialize_with = "as_f64")]
-    pub p: f64, // best bid price
-    #[serde(deserialize_with = "as_f64")]
-    pub q: f64, // best bid qty
+    pub p: Decimal, // best bid price
+    pub q: Decimal, // best bid qty
 }
 
 #[allow(non_snake_case)]
@@ -108,17 +107,15 @@ impl From<Message> for WSOrderBookUpdatesBinance {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub struct BinanceDepthUpdate {
-    #[serde(deserialize_with = "as_f64")]
-    pub price: f64,
-    #[serde(deserialize_with = "as_f64")]
-    pub quantity: f64,
+    pub price: Decimal,
+    pub quantity: Decimal,
 }
 
 impl Default for BinanceDepthUpdate {
     fn default() -> Self {
         Self {
-            price: 0.0,
-            quantity: 0.0,
+            price: Decimal::ZERO,
+            quantity: Decimal::ZERO,
         }
     }
 }
@@ -270,6 +267,7 @@ pub struct WSOrderBookUpdateByBit {
     pub quantity: f64,
 }
 
+/*
 impl WSDepthUpdateByBit {
     pub fn depths(
         self,
@@ -297,6 +295,7 @@ impl WSDepthUpdateByBit {
         (bid_updates, ask_updates)
     }
 }
+*/
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WSDepthUpdateByBit {
@@ -334,6 +333,7 @@ pub struct ByBitData {
     pub b: Vec<WSOrderBookUpdateByBit>,
 }
 
+/*
 impl HTTPSnapShotDepthResponseByBit {
     pub fn depths(
         self,
@@ -361,6 +361,7 @@ impl HTTPSnapShotDepthResponseByBit {
         (bid_updates, ask_updates)
     }
 }
+*/
 
 #[allow(non_snake_case)]
 #[derive(Debug, Serialize, Deserialize)]
