@@ -14,7 +14,8 @@ features
 * flattened stack only hashmap where each price point (or level) is a key and its value is a 
    array of exchange liquidity nodes
 * contiguous
-* precompile configurable fixed sized array level length by exchange connectivity count
+* precompile configurable fixed sized array level length by exchange connectivity count through
+  a [declarative macro](https://github.com/githubsands/liquidity-engine/blob/master/orderbook/src/level.rs#L12)
 * preinitialized 
 * `O(1) + O(EC)` price point reads and writes time complexity where `EC` = `exchange count`
 
