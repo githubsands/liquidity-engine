@@ -4,6 +4,8 @@ Builds a live orderbook from http snapshots from N configurable exchanges and th
 through soft real time websocket depth updates. After a update the best ten asks and bids aswell as well 
 as the spread are provided through a grpc server endpoint
 
+originally inspired by this [gist](https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef)
+
 ## Libraries and components
 
 # Orderbook
