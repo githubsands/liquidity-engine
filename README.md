@@ -13,7 +13,7 @@ originally inspired by this [gist](https://gist.github.com/druska/d6ce3f2bac74db
 features
 
 * `no_std`
-* flattened stack only hashmap where each price point (or level) is a key and its value is a 
+* flattened stack only container for exchanges liquidity where each price point (or level) is a key and its value is a 
    array of exchange liquidity nodes
 * contiguous
 * precompile configurable fixed sized array level length by exchange connectivity count through
