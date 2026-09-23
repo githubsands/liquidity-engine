@@ -55,10 +55,11 @@ prost = "0.11.9"
 futures-util = "0.3.28"
 serde_json = "1.0.97"
 tokio-context = "0.1.3"
-tungstenite = "0.19.0"
+# must match the tungstenite version compio-ws is built on so `Message`/`Error` types line up
+tungstenite = { version = "0.29.0", default-features = false }
 pin-project-lite = "0.2.16"
-reqwest = { version = "0.11", features = ["json"] }
-tokio-tungstenite = "0.19.0"
+compio = { version = "0.19.0", features = ["time", "macros", "ws-connect", "rustls", "webpki-roots"] }
+cyper = { version = "0.9.0", default-features = false, features = ["rustls", "json"] }
 
 exchange = { path = "exchange" }
 

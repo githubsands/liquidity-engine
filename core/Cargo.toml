@@ -11,3 +11,5 @@ market-objects.workspace = true
 quoter-errors.workspace = true
 crossbeam-channel.workspace = true
 tokio.workspace = true
+compio.workspace = true
+kanal = "0.1.1"

@@ -4,23 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-exchange-stubs.workspace = true
-testing-traits.workspace = true
 config.workspace = true
 market-objects.workspace = true
 quoter-errors.workspace = true
-reqwest.workspace = true
+cyper.workspace = true
 tokio.workspace = true
 crossbeam-channel.workspace = true
-tungstenite.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
 itertools.workspace = true
-tokio-tungstenite.workspace = true
 pin-project-lite.workspace = true
 arrayvec = { git = "https://github.com/bluss/arrayvec" }
-compio = "0.19.0"
+compio.workspace = true
 thiserror = "1.0.40"
+kanal = "0.1.1"
 
+[dev-dependencies]
+exchange-stubs.workspace = true
+testing-traits.workspace = true

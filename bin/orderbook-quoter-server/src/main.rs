@@ -158,9 +158,8 @@ fn orderbook_quoter_server(config: Config) -> Result<(), Box<dyn Error>> {
         let local = LocalSet::new();
         core_affinity::set_for_current(io_ws_core);
         local.spawn_local(async move {
-            let mut depth_driver = DepthDriver::new(
+            let (mut depth_driver, _depth_consumer) = DepthDriver::new(
                 &config_clone.exchanges,
-                depth_producer,
                 snapshot_depth_consumer,
             )
             .unwrap();

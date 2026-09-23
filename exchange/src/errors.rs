@@ -36,7 +36,7 @@ pub enum ExchangeStreamError {
     #[error("Exchange Controller Error")]
     ExchangeController,
     #[error("HTTP request error: {0}")]
-    HttpRequest(#[from] reqwest::Error),
+    HttpRequest(String),
     #[error("Snapshot deserialization error: {0}")]
     Deserialization(#[from] serde_json::Error),
 }

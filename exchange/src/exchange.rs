@@ -1,11 +1,11 @@
 use futures::stream::SplitSink;
 use futures_util::SinkExt;
 
-use tokio::net::TcpStream;
+use compio::net::TcpStream;
+use compio::ws::{tungstenite::protocol::Message, WebSocketStream};
 use tokio::sync::watch::Receiver as watchReceiver;
-use tokio_tungstenite::{tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
 
-use crossbeam_channel::Sender;
+use kanal::*;
 
 use tracing::{error, info};
 
@@ -18,7 +18,7 @@ const SUBSCRIBE: &'static str = "SUBSCRIBE";
 
 pub struct Exchange {
     pub inner: ExchangeStream,
-    pub ws_sink: Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
+    pub ws_sink: Option<SplitSink<WebSocketStream<TcpStream>, Message>>,
     pub websocket_uri: String,
     pub watched_pair: String,
 }
@@ -26,7 +26,7 @@ pub struct Exchange {
 impl Exchange {
     pub fn new(
         exchange_config: &ExchangeConfig,
-        depth_producer: Sender<DepthUpdate>,
+        depth_producer: AsyncSender<DepthUpdate>,
         watch_trigger: watchReceiver<()>,
     ) -> Result<Exchange, ExchangeStreamError> {
         let inner = ExchangeStream::new(
@@ -64,7 +64,7 @@ impl Exchange {
             .ws_sink
             .as_mut()
             .ok_or(ExchangeStreamError::ExchangeController)?
-            .send(Message::Text(json_obj_binance.to_string()))
+            .send(Message::Text(json_obj_binance.to_string().into()))
             .await;
         // TODO: handle this differently;
         match exchange_response {
@@ -103,7 +103,9 @@ impl Exchange {
         self.ws_sink
             .as_mut()
             .ok_or(ExchangeStreamError::ExchangeController)?
-            .send(Message::Close(None));
+            .close()
+            .await
+            .map_err(|e| ExchangeStreamError::ExchangeWSError(e.to_string()))?;
         Ok(())
     }
 }
