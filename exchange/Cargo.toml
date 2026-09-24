@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 config.workspace = true
 market-objects.workspace = true
+depth-pool.workspace = true
 quoter-errors.workspace = true
 cyper.workspace = true
 tokio.workspace = true

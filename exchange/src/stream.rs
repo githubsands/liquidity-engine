@@ -3,8 +3,6 @@ use std::{pin::Pin, task::Poll};
 
 use crate::errors::ExchangeStreamError;
 
-use serde_json::from_str;
-
 use pin_project_lite::pin_project;
 
 use std::time::Duration;
@@ -13,7 +11,6 @@ use futures::future::FutureExt;
 use futures::stream::iter;
 use futures::stream::{SplitSink, SplitStream, Stream, StreamExt};
 use futures::{pin_mut, select_biased};
-use itertools::interleave;
 use tokio::sync::watch::Receiver as stateSync;
 
 use compio::net::TcpStream;
@@ -29,13 +26,70 @@ use kanal::*;
 use cyper::Client;
 use tracing::{error, info, warn};
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use config::ExchangeConfig;
-use market_objects::{
-    DepthUpdate, HTTPSnapShotDepthResponseBinance, WSOrderBookUpdatesBinance,
-};
+use depth_pool::{DepthPool, DepthPoolError, DepthSlot};
+use market_objects::book::parse_binance_book;
 
 // compio-ws wraps TLS internally, so the stream is parameterised on the raw socket
 type WsStream = WebSocketStream<TcpStream>;
+
+// capacity of each of ExchangeStream's depth buffers
+// todo: make this configurable
+pub const DEPTH_BUFFER_SIZE: usize = 1000;
+
+type DepthBuffer = ArrayVec<DepthSlot, DEPTH_BUFFER_SIZE>;
+
+#[derive(thiserror::Error, Debug)]
+enum IngestError {
+    #[error("depth buffer or depth pool is full")]
+    Full,
+    #[error("failed to parse order book message: {0}")]
+    Parse(#[from] serde_json::Error),
+}
+
+// ingest_book parses an order book payload straight into depth pool slots appended to
+// `target`: prices and quantities are read from the borrowed bytes and archived once, in
+// place. on any failure every slot taken for this payload is released so nothing leaks.
+fn ingest_book(
+    json: &[u8],
+    location: u8,
+    snapshot: bool,
+    pool: &mut DepthPool,
+    target: &mut DepthBuffer,
+) -> Result<(), IngestError> {
+    let start = target.len();
+    let mut full = false;
+    let parsed = parse_binance_book(json, location, snapshot, |depth| {
+        if target.is_full() {
+            full = true;
+            return false;
+        }
+        match pool.insert(&depth) {
+            Ok(slot) => {
+                target.push(slot);
+                true
+            }
+            Err(DepthPoolError::Exhausted) => {
+                full = true;
+                false
+            }
+            Err(e) => {
+                warn!("failed to archive depth: {}", e);
+                false
+            }
+        }
+    });
+    if let Err(e) = parsed {
+        for slot in target.drain(start..) {
+            pool.release(slot);
+        }
+        return Err(if full { IngestError::Full } else { e.into() });
+    }
+    Ok(())
+}
 
 fn ws_config() -> WsConfig {
     let ws_config = WebSocketConfig::default()
@@ -53,7 +107,7 @@ pin_project! {
         pub exchange_name: u8,
         pub snapshot_enabled: bool,
         // todo: update webssocket_depth_buffer take the array vecs size by pragma or something similar -- it should be configurable
-        pub websocket_depth_buffer: ArrayVec<DepthUpdate, 1000>,
+        pub websocket_depth_buffer: DepthBuffer,
         pub pull_retry_count: u8,
         pub http_snapshot_uri: String,
         pub buffer_websocket_depths: bool,
@@ -63,19 +117,22 @@ pin_project! {
         pub websocket_uri: String,
         pub watched_pair: String,
 
-        pub buffer: ArrayVec<DepthUpdate, 1000>,
+        pub buffer: DepthBuffer,
 
         pub snapshot_sync: Option<stateSync<()>>,
 
         // todo: update webssocket_depth_buffer take the array vecs size by pragma or something similar -- it should be configurable
         #[pin]
-        depth_update_buffer: ArrayVec<DepthUpdate, 1000>,
+        depth_update_buffer: DepthBuffer,
         #[pin]
         ws_connection_orderbook: Option<WsStream>,
         #[pin]
         ws_connection_orderbook_reader: Option<SplitStream<WsStream>>,
 
-        depths_producer: AsyncSender<DepthUpdate>,
+        // carries slot handles; the depths themselves stay archived in `depth_pool`
+        depths_producer: AsyncSender<DepthSlot>,
+        // the owning Exchange's depth pool
+        pub depth_pool: Rc<RefCell<DepthPool>>,
 
         http_client: Option<Client>,
     }
@@ -84,7 +141,8 @@ pin_project! {
 impl ExchangeStream {
     pub fn new(
         exchange_config: &ExchangeConfig,
-        orders_producer: AsyncSender<DepthUpdate>,
+        orders_producer: AsyncSender<DepthSlot>,
+        depth_pool: Rc<RefCell<DepthPool>>,
         snapshot_sync: stateSync<()>,
         _http_client_option: bool,
     ) -> Result<Self, ExchangeStreamError> {
@@ -114,6 +172,7 @@ impl ExchangeStream {
             depth_update_buffer: ArrayVec::new(),
             ws_connection_orderbook_reader: None,
             depths_producer: orders_producer,
+            depth_pool,
             http_client,
         };
         Ok(exchange)
@@ -256,12 +315,19 @@ impl ExchangeStream {
         return Err(ExchangeStreamError::ExchangeWSError("tbd".to_string()));
     }
 
-    async fn pull_depths(
-        &mut self,
-    ) -> Result<impl Iterator<Item = DepthUpdate>, ExchangeStreamError> {
-        let snapshot_depths = self.orderbook_snapshot().await?;
-        let interleaved_depths = interleave(snapshot_depths.0, snapshot_depths.1);
-        Ok(interleaved_depths)
+    async fn pull_depths(&mut self) -> Result<impl Iterator<Item = DepthSlot>, ExchangeStreamError> {
+        let body = self.orderbook_snapshot().await?;
+        let mut depths = DepthBuffer::new();
+        ingest_book(
+            &body,
+            self.exchange_name,
+            true,
+            &mut self.depth_pool.borrow_mut(),
+            &mut depths,
+        )
+        .map_err(|e| ExchangeStreamError::Snapshot(e.to_string()))?;
+        info!("finished receiving snaps for {}", self.exchange_name);
+        Ok(depths.into_iter())
     }
     pub async fn sequence_depths(&mut self) {
         let mut prepared_snapshot_stream = iter(&*self.websocket_depth_buffer);
@@ -269,65 +335,39 @@ impl ExchangeStream {
             self.buffer.push(*depth_update)
         }
     }
+    // orderbook_snapshot fetches the raw snapshot body; it is parsed in place by pull_depths
     async fn orderbook_snapshot(
         &mut self,
-    ) -> Result<
-        (
-            impl Iterator<Item = DepthUpdate>,
-            impl Iterator<Item = DepthUpdate>,
-        ),
-        ExchangeStreamError,
-    > {
+    ) -> Result<impl std::ops::Deref<Target = [u8]>, ExchangeStreamError> {
+        if !matches!(self.exchange_name, 1 | 2) {
+            error!(
+                "failed to create snapshot due to exchange_name {}",
+                self.exchange_name
+            );
+            return Err(ExchangeStreamError::Snapshot(
+                "Failed to create snapshot".to_string(),
+            ));
+        }
         let req_builder = self
             .http_client
             .as_ref()
             .unwrap()
             .get(self.http_snapshot_uri.as_str())
             .map_err(|e| ExchangeStreamError::HttpRequest(e.to_string()))?;
-        let snapshot_response_result = req_builder.send().await;
-        match snapshot_response_result {
-            Ok(snapshot_response) => match (snapshot_response, self.exchange_name) {
-                (snapshot_response, 1) => {
-                    if snapshot_response.status() != 200 {
-                        return Err(ExchangeStreamError::ExchangeStreamSnapshot(
-                            "failed to get snapshot through http. received error code: {}"
-                                .to_string(),
-                        ));
-                    }
-                    let body = snapshot_response
-                        .text()
-                        .await
-                        .map_err(|e| ExchangeStreamError::HttpRequest(e.to_string()))?;
-                    let snapshot: HTTPSnapShotDepthResponseBinance = from_str(&body)?;
-                    info!("finished receiving snaps for {}", self.exchange_name);
-                    let snapshot_depths = snapshot.depths(1);
-                    Ok(snapshot_depths)
-                }
-                (snapshot_response, 2) => {
-                    // todo: snapshot a a different exchange
-                    let snapshot: HTTPSnapShotDepthResponseBinance = snapshot_response
-                        .json()
-                        .await
-                        .map_err(|e| ExchangeStreamError::HttpRequest(e.to_string()))?;
-                    info!("finished receiving snaps for {}", self.exchange_name);
-                    let snapshot_depths = snapshot.depths(2);
-                    Ok(snapshot_depths)
-                }
-                _ => {
-                    error!(
-                        "failed to create snapshot due to exchange_name {}",
-                        self.exchange_name
-                    );
-                    return Err(ExchangeStreamError::Snapshot(
-                        "Failed to create snapshot".to_string(),
-                    ));
-                }
-            },
-            Err(err) => {
-                error!("failed to reconcile snapshot result: {}", err);
-                return Err(ExchangeStreamError::Snapshot(err.to_string()));
-            }
+        let snapshot_response = req_builder.send().await.map_err(|err| {
+            error!("failed to reconcile snapshot result: {}", err);
+            ExchangeStreamError::Snapshot(err.to_string())
+        })?;
+        if snapshot_response.status() != 200 {
+            return Err(ExchangeStreamError::ExchangeStreamSnapshot(format!(
+                "failed to get snapshot through http. received error code: {}",
+                snapshot_response.status()
+            )));
         }
+        snapshot_response
+            .bytes()
+            .await
+            .map_err(|e| ExchangeStreamError::HttpRequest(e.to_string()))
     }
     pub async fn reconnect(
         &mut self,
@@ -359,6 +399,8 @@ pub enum WSStreamState {
     SenderError,
     FailedStream,
     FailedDeserialize, // TODO: Pass down the deserialize error like we do with the WSError
+    // a depth buffer or the depth pool had no room for a message's depths
+    BufferFull,
     Success,
     WaitingForDepth,
 }
@@ -371,21 +413,25 @@ impl Stream for ExchangeStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         let mut this = self.project();
-        if let Some(depth) = this.buffer.pop() {
-            match this.depths_producer.try_send(depth) {
+        if let Some(slot) = this.buffer.pop() {
+            match this.depths_producer.try_send(slot) {
                 Ok(true) => {
                     info!("orderbook buffer success")
                 }
                 Ok(false) => {
                     warn!("failed to try_send to order bid producer, channel full, trying again");
+                    // keep the depth for the next poll rather than dropping it
+                    this.buffer.push(slot);
                     return Poll::Ready(Some(WSStreamState::SenderError));
                 }
                 Err(SendError::Closed) => {
                     error!("depth producer within ExchangeStream closed while streaming");
+                    this.depth_pool.borrow_mut().release(slot);
                     return Poll::Ready(Some(WSStreamState::SenderError));
                 }
                 Err(SendError::ReceiveClosed) => {
                     error!("depth producer within ExchangeStream disconnected while streaming");
+                    this.depth_pool.borrow_mut().release(slot);
                     return Poll::Ready(Some(WSStreamState::SenderError));
                 }
             }
@@ -406,25 +452,25 @@ impl Stream for ExchangeStream {
                         if ws_message.is_pong() || ws_message.is_ping() {
                             continue;
                         }
-                        let orderbook_update = {
-                            match WSOrderBookUpdatesBinance::try_from(ws_message) {
-                                Ok(orderbook_update) => orderbook_update,
-                                Err(e) => {
-                                    warn!("failed to deserialize the web socket messsage: {}", e);
-                                    continue;
-                                }
-                            }
-                        };
-                        let depths = orderbook_update.depths(1);
-                        let woven_depths = interleave(depths.0, depths.1);
-                        if *this.buffer_websocket_depths {
-                            for depth in woven_depths {
-                                this.buffer.push(depth);
-                            }
+                        let Message::Text(text) = &ws_message else {
                             continue;
-                        } else {
-                            for depth in woven_depths {
-                                this.buffer.push(depth);
+                        };
+                        let ingested = ingest_book(
+                            text.as_bytes(),
+                            1,
+                            false,
+                            &mut this.depth_pool.borrow_mut(),
+                            this.buffer,
+                        );
+                        match ingested {
+                            Ok(()) => {}
+                            Err(IngestError::Full) => {
+                                warn!("no room for websocket depths, dropping message");
+                                return Poll::Ready(Some(WSStreamState::BufferFull));
+                            }
+                            Err(e) => {
+                                warn!("failed to deserialize the web socket messsage: {}", e);
+                                continue;
                             }
                         }
                     }
@@ -437,25 +483,25 @@ impl Stream for ExchangeStream {
                         if ws_message.is_pong() || ws_message.is_ping() {
                             continue;
                         }
-                        let orderbook_update = {
-                            match WSOrderBookUpdatesBinance::try_from(ws_message) {
-                                Ok(orderbook_update) => orderbook_update,
-                                Err(e) => {
-                                    warn!("failed to deserialize the web socket messsage: {}", e);
-                                    continue;
-                                }
-                            }
-                        };
-                        let depths = orderbook_update.depths(1);
-                        let woven_depths = interleave(depths.0, depths.1);
-                        if *this.buffer_websocket_depths {
-                            for depth in woven_depths {
-                                this.depth_update_buffer.push(depth);
-                            }
+                        let Message::Text(text) = &ws_message else {
                             continue;
-                        } else {
-                            for depth in woven_depths {
-                                this.depth_update_buffer.push(depth);
+                        };
+                        let ingested = ingest_book(
+                            text.as_bytes(),
+                            1,
+                            false,
+                            &mut this.depth_pool.borrow_mut(),
+                            &mut *this.depth_update_buffer,
+                        );
+                        match ingested {
+                            Ok(()) => {}
+                            Err(IngestError::Full) => {
+                                warn!("no room for websocket depths, dropping message");
+                                return Poll::Ready(Some(WSStreamState::BufferFull));
+                            }
+                            Err(e) => {
+                                warn!("failed to deserialize the web socket messsage: {}", e);
+                                continue;
                             }
                         }
                     }
