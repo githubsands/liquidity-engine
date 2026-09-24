@@ -10,35 +10,50 @@ use futures::future::join_all;
 use tokio::sync::watch::{channel as watchChannel, Receiver as watchReceiver};
 
 use config::ExchangeConfig;
-use exchange::exchange::Exchange;
-use market_objects::DepthUpdate;
+use depth_pool::{DepthPool, DepthSlot};
+use exchange::exchange::{Exchange, MAX_BUFFERED_DEPTHS};
 use quoter_errors::{ErrorHotPath, ErrorInitialState};
 
 const DEPTH_CHANNEL_SIZE: usize = 10_000;
 
 pub struct DepthDriver {
+    // shared with every exchange; they all run on the driver's single compio thread,
+    // so Rc<RefCell<_>> is enough
+    pool: Rc<RefCell<DepthPool>>,
     exchanges: Vec<Rc<RefCell<Exchange>>>,
 }
 
 impl DepthDriver {
-    // new owns the depth channel: each exchange gets a clone of the producer and the
-    // consumer is handed back to the caller to drain depth updates from.
+    // new owns the depth channel and the depth pool: each exchange gets a clone of the
+    // producer and a handle to the pool, and the consumer is handed back to the caller.
+    // the channel carries DepthSlots; the reader views each depth in place through
+    // `pool()` and must release the slot once it's done with it.
     pub fn new(
         exchange_configs: &Vec<ExchangeConfig>,
         _: watchReceiver<()>,
-    ) -> Result<(DepthDriver, AsyncReceiver<DepthUpdate>), ErrorInitialState> {
+    ) -> Result<(DepthDriver, AsyncReceiver<DepthSlot>), ErrorInitialState> {
         let (depths_producer, depths_consumer) = bounded_async(DEPTH_CHANNEL_SIZE);
+        // enough slots for a full channel plus every exchange's buffers, so the pool only
+        // runs dry if the reader stops releasing slots
+        let pool_capacity = DEPTH_CHANNEL_SIZE + exchange_configs.len() * MAX_BUFFERED_DEPTHS;
+        let pool = Rc::new(RefCell::new(DepthPool::with_capacity(pool_capacity)));
         let mut exchanges: Vec<Rc<RefCell<Exchange>>> = Vec::new();
         let (_, inner_snapshot_consumer) = watchChannel(());
         for exchange_config in exchange_configs {
             let exchange = Exchange::new(
                 exchange_config,
                 depths_producer.clone(),
+                pool.clone(),
                 inner_snapshot_consumer.clone(),
             );
             exchanges.push(Rc::new(RefCell::new(exchange?)));
         }
-        Ok((DepthDriver { exchanges }, depths_consumer))
+        Ok((DepthDriver { pool, exchanges }, depths_consumer))
+    }
+
+    // pool is the shared depth pool the channel's DepthSlots point into
+    pub fn pool(&self) -> Rc<RefCell<DepthPool>> {
+        self.pool.clone()
     }
 
     pub fn run(self, rt: &Runtime) -> JoinHandle<Result<(), ErrorInitialState>> {
