@@ -1,0 +1,14 @@
+[package]
+name = "zc-async-channel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+compio.workspace = true
+
+[dev-dependencies]
+compio = { workspace = true, features = ["net", "io"] }
+compio-executor = "0.1"
+futures = { workspace = true }
+depth-pool = { workspace = true }
+depth-generator = { workspace = true }
